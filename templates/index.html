@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NBA Team Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f9; padding: 20px; color: #333; margin: 0;}
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; color: #1d428a; margin-bottom: 20px; }
+        
+        .header-box { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; margin-bottom: 20px;}
+        
+        .controls { display: flex; justify-content: center; gap: 10px; align-items: center;}
+        select { padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; width: 100%; max-width: 400px; }
+        
+        .btn-csv { padding: 12px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s; display: none; }
+        .btn-csv:hover { background-color: #218838; }
+        
+        #status-text { margin-top: 15px; font-weight: bold; color: #1d428a; display: none; }
+        .progress-container { width: 100%; max-width: 600px; background-color: #e0e0e0; border-radius: 8px; margin: 10px auto; overflow: hidden; display: none; height: 15px; }
+        .progress-bar { height: 100%; width: 0%; background-color: #c8102e; transition: width 0.4s ease; }
+        
+        .dashboard { display: flex; gap: 20px; }
+        .player-list { flex: 1; display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; padding-right: 10px;}
+        .chart-area { flex: 2; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: none;}
+        
+        .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; border-left: 5px solid #1d428a; transition: 0.2s;}
+        .card:hover { transform: translateX(5px); box-shadow: 0 4px 10px rgba(0,0,0,0.15);}
+        .card h3 { margin: 0 0 5px 0; font-size: 18px; }
+        .card p { margin: 2px 0; font-size: 14px; color: #666; }
+        .metric { font-weight: bold; font-size: 16px;}
+        .green { color: #28a745; }
+        .red { color: #dc3545; }
+        
+        svg { width: 100%; height: 450px; }
+        .bar { fill: #1d428a; transition: fill 0.2s; }
+        .bar:hover { fill: #3a63b5; }
+        .axis-label { font-size: 13px; font-weight: 500;}
+        .avg-line { stroke: #666; stroke-width: 2px; stroke-dasharray: 6,6; }
+        .avg-text { fill: #666; font-size: 13px; font-weight: bold; }
+        .tooltip { position: absolute; text-align: center; padding: 10px; font-size: 13px; background: rgba(0,0,0,0.85); color: white; border-radius: 5px; pointer-events: none; opacity: 0; transform: translate(-50%, -100%); margin-top: -10px;}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header-box">
+        <h1>NBA Advanced AI Dashboard</h1>
+        
+        <div class="controls">
+            <select id="teamSelect" onchange="startStream()">
+                <option value="">Loading Teams...</option>
+            </select>
+            <button id="csvBtn" class="btn-csv" onclick="downloadCSV()">⬇ Download CSV</button>
+        </div>
+        
+        <div id="status-text">Connecting to prediction engine...</div>
+        <div class="progress-container" id="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+    </div>
+    
+    <div class="dashboard" id="dashboard">
+        <div class="player-list" id="playerList"></div>
+        <div class="chart-area" id="chartArea">
+            <h2 id="chartTitle" style="text-align: center; color: #1d428a; margin-top:0;">Select a Player</h2>
+            <div id="chart-container"></div>
+        </div>
+    </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+    let currentTeamData = []; 
+    let nextOpponent = "";
+    let eventSource = null;
+
+    document.addEventListener("DOMContentLoaded", async () => {
+        const teamSelect = document.getElementById('teamSelect');
+        try {
+            const res = await fetch('/api/teams');
+            const data = await res.json();
+            
+            teamSelect.innerHTML = '<option value="">Select an NBA Team</option>';
+            if(data.success) {
+                data.teams.forEach(team => {
+                    let opt = document.createElement('option');
+                    opt.value = team.abbreviation;
+                    opt.text = team.full_name;
+                    teamSelect.add(opt);
+                });
+            }
+        } catch (e) {
+            teamSelect.innerHTML = '<option value="">Error loading teams</option>';
+        }
+    });
+
+    function startStream() {
+        const teamAbbr = document.getElementById('teamSelect').value;
+        if (!teamAbbr) return;
+
+        document.getElementById('playerList').innerHTML = '';
+        document.getElementById('chartArea').style.display = 'none';
+        document.getElementById('csvBtn').style.display = 'none';
+        
+        const statusText = document.getElementById('status-text');
+        const progContainer = document.getElementById('progress-container');
+        const progBar = document.getElementById('progress-bar');
+        
+        statusText.style.display = 'block';
+        progContainer.style.display = 'block';
+        statusText.innerText = 'Initializing...';
+        progBar.style.width = '0%';
+        currentTeamData = []; 
+
+        if(eventSource) eventSource.close();
+
+        eventSource = new EventSource(`/stream_predict/${teamAbbr}`);
+
+        eventSource.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            
+            if (data.status === 'info') {
+                statusText.innerText = data.message;
+            } 
+            else if (data.status === 'progress') {
+                statusText.innerText = data.message;
+                const percent = (data.current / data.total) * 100;
+                progBar.style.width = `${percent}%`;
+            }
+            else if (data.status === 'player_done') {
+                currentTeamData.push(data.player_data);
+                nextOpponent = data.opponent;
+                appendPlayerCard(data.player_data);
+            }
+            else if (data.status === 'warning') {
+                const listDiv = document.getElementById('playerList');
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.style.borderLeft = '5px solid #dc3545';
+                card.style.cursor = 'default';
+                card.innerHTML = `
+                    <h3 style="color: #dc3545;">${data.player} (Skipped)</h3>
+                    <p>Status: <span style="font-weight:bold; color: #dc3545;">Failed</span></p>
+                    <p style="font-size:12px; font-style:italic;">Reason: ${data.message}</p>
+                `;
+                listDiv.appendChild(card);
+            }
+            else if (data.status === 'complete') {
+                statusText.innerText = data.message;
+                progBar.style.width = '100%';
+                
+                if (currentTeamData.length > 0) {
+                    document.getElementById('csvBtn').style.display = 'inline-block';
+                }
+                
+                setTimeout(() => {
+                    progContainer.style.display = 'none';
+                    statusText.style.display = 'none';
+                }, 2000);
+                
+                eventSource.close(); 
+            }
+            else if (data.status === 'error') {
+                alert("Error: " + data.message);
+                eventSource.close();
+            }
+        };
+
+        eventSource.onerror = function() {
+            statusText.innerText = "Connection lost or timed out.";
+            eventSource.close();
+        };
+    }
+
+    function appendPlayerCard(player) {
+        const listDiv = document.getElementById('playerList');
+        
+        const isOverAvg = player.prediction > player.avg_10;
+        const colorClass = isOverAvg ? 'green' : 'red';
+        const arrow = isOverAvg ? '▲' : '▼';
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.onclick = () => showChart(player.name);
+        
+        card.innerHTML = `
+            <h3>${player.name}</h3>
+            <p>vs. ${nextOpponent}</p>
+            <p class="metric ${colorClass}">Predicted: ${player.prediction} PTS ${arrow}</p>
+            <p>10-Game Avg: ${player.avg_10} PTS</p>
+        `;
+        listDiv.appendChild(card);
+    }
+
+    function showChart(playerName) {
+        const player = currentTeamData.find(p => p.name === playerName);
+        if(!player) return;
+
+        document.getElementById('chartArea').style.display = 'block';
+        document.getElementById('chartTitle').innerText = `${player.name} vs. ${nextOpponent}`;
+        
+        drawBarChart(player);
+    }
+
+    function drawBarChart(playerData) {
+        d3.select("#chart-container").html(""); 
+
+        const history = playerData.history;
+        const prediction = playerData.prediction;
+        const avgPts = playerData.avg_10;
+
+        const chartData = history.map(d => ({ date: d.game_date, pts: d.pts, label: `vs ${d.opp}`, isPred: false }));
+        chartData.push({ date: "Next", pts: prediction, label: `vs ${nextOpponent} (Predicted)`, isPred: true });
+
+        const margin = {top: 30, right: 30, bottom: 50, left: 40};
+        const width = document.getElementById('chart-container').clientWidth - margin.left - margin.right;
+        const height = 400 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart-container")
+            .append("svg")
+            .attr("viewBox", `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const tooltip = d3.select("#tooltip");
+
+        const x = d3.scaleBand().domain(chartData.map(d => d.date)).range([0, width]).padding(0.3); 
+        const y = d3.scaleLinear().domain([0, d3.max(chartData, d => d.pts) + 10]).range([height, 0]);
+
+        svg.append("g")
+            .attr("transform", `translate(0,${height})`)
+            .call(d3.axisBottom(x))
+            .selectAll("text")
+            .attr("class", "axis-label");
+
+        svg.append("g").call(d3.axisLeft(y).ticks(6)).selectAll("text").attr("class", "axis-label");
+
+        const predColor = prediction > avgPts ? '#28a745' : '#dc3545';
+
+        svg.selectAll(".bar")
+            .data(chartData)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .style("fill", d => d.isPred ? predColor : '#1d428a') 
+            .attr("x", d => x(d.date))
+            .attr("y", d => y(d.pts))
+            .attr("width", x.bandwidth())
+            .attr("height", d => height - y(d.pts))
+            .attr("rx", 4) 
+            .on("mouseover", function(event, d) {
+                tooltip.transition().duration(200).style("opacity", 1);
+                tooltip.html(`<strong>${d.date}</strong><br/>${d.label}<br/><strong>${d.pts} PTS</strong>`)
+                    .style("left", (event.pageX) + "px")
+                    .style("top", (event.pageY) + "px");
+            })
+            .on("mouseout", function() {
+                tooltip.transition().duration(500).style("opacity", 0);
+            });
+
+        svg.append("line")
+            .attr("class", "avg-line")
+            .attr("x1", 0).attr("x2", width)
+            .attr("y1", y(avgPts)).attr("y2", y(avgPts));
+
+        svg.append("text")
+            .attr("class", "avg-text")
+            .attr("x", width - 5)
+            .attr("y", y(avgPts) - 10)
+            .attr("text-anchor", "end")
+            .text(`10-Game Avg: ${avgPts.toFixed(1)}`);
+    }
+
+    function downloadCSV() {
+        if (currentTeamData.length === 0) return;
+        
+        let csvContent = "Player,Opponent,Predicted_PTS,10_Game_Avg,Difference\n";
+        
+        currentTeamData.forEach(player => {
+            let diff = (player.prediction - player.avg_10).toFixed(1);
+            let row = `"${player.name}","${nextOpponent}",${player.prediction},${player.avg_10},${diff}`;
+            csvContent += row + "\n";
+        });
+        
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        
+        const teamSelect = document.getElementById('teamSelect');
+        const teamName = teamSelect.options[teamSelect.selectedIndex].text;
+        
+        const dateString = new Date().toISOString().split('T')[0];
+        
+        link.setAttribute("href", url);
+        link.setAttribute("download", `${teamName}_Predictions_${dateString}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+</script>
+
+</body>
+</html>

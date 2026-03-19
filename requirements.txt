@@ -1,0 +1,7 @@
+nba_api
+pandas
+numpy
+scikit-learn
+xgboost
+flask
+beautifulsoup4
