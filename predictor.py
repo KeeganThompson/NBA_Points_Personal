@@ -10,6 +10,7 @@ class Predictor:
             'L3_PTS', 'L5_PTS', 'L10_PTS', 
             'L5_MIN', 'L5_FGA', 'L5_USG',
             'Season_Avg_PTS',
+            'Is_Rookie',
             'L5_PPM',
             'Trend_Multiplier'
         ]
@@ -24,55 +25,59 @@ class Predictor:
         except:
             return 0.0
 
-    def prepare_data(self, player_df, adv_stats, team_map, current_team_id):
-        df = player_df.copy(deep=True)
+    def prepare_data(self, player_df, adv_stats, team_map, current_team_id, experience):
+        df = player_df.copy()
         df['MP_Float'] = df['MP'].apply(self.convert_minutes)
         df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'])
         
-        df = df.assign(PPM=df['PTS'] / (df['MP_Float'] + 0.1))
+        df['Is_Rookie'] = 1 if experience == 0 else 0
+        df['PPM'] = df['PTS'] / (df['MP_Float'] + 0.1)
         
-        df = df.assign(Days_Rest=df['GAME_DATE'].diff().dt.days.fillna(3))
+        df['Days_Rest'] = df['GAME_DATE'].diff().dt.days.fillna(3)
         
         recovery_values = []
         current_recovery = 0.0
         for rest in df['Days_Rest']:
-            if rest >= 7:
-                current_recovery = 1.0 
-            elif current_recovery > 0:
-                current_recovery = max(0.0, current_recovery - 0.2)
+            if rest >= 7: current_recovery = 1.0 
+            elif current_recovery > 0: current_recovery = max(0.0, current_recovery - 0.2)
             recovery_values.append(current_recovery)
             
-        df = df.assign(Return_From_Injury=recovery_values)
+        df['Return_From_Injury'] = recovery_values
         df['Days_Rest'] = df['Days_Rest'].clip(upper=7)
 
         df['Opp_ID'] = df['Opp'].map(team_map)
         df = df.merge(adv_stats, left_on='Opp_ID', right_on='TEAM_ID', how='left')
         
         df = df.sort_values('GAME_DATE').reset_index(drop=True)
-        df = df.rename(columns={'DEF_RATING': 'Opp_Def_Rating', 'PACE': 'Opp_Pace', 'NET_RATING': 'Opp_Net_Rating'})
         
-        team_net_val = adv_stats.loc[adv_stats['TEAM_ID'] == current_team_id, 'NET_RATING']
-        team_net_val = team_net_val.iloc[0] if not team_net_val.empty else 0.0
+        rename_map = {'DEF_RATING': 'Opp_Def_Rating', 'PACE': 'Opp_Pace', 'NET_RATING': 'Opp_Net_Rating'}
+        df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
         
-        df = df.assign(Blowout_Risk=(team_net_val - df['Opp_Net_Rating'].fillna(0)).abs())
-
+        if 'Opp_Def_Rating' not in df.columns: df['Opp_Def_Rating'] = 115.0
+        if 'Opp_Pace' not in df.columns: df['Opp_Pace'] = 100.0
+        if 'Opp_Net_Rating' not in df.columns: df['Opp_Net_Rating'] = 0.0
+        
         df['Opp_Def_Rating'] = df['Opp_Def_Rating'].fillna(115.0)
         df['Opp_Pace'] = df['Opp_Pace'].fillna(100.0)
+        df['Opp_Net_Rating'] = df['Opp_Net_Rating'].fillna(0.0)
 
-        df = df.assign(
-            L5_PPM=df['PPM'].rolling(window=5, min_periods=1).mean().shift(1),
-            L3_PTS=df['PTS'].rolling(window=3, min_periods=1).mean().shift(1),
-            L5_PTS=df['PTS'].rolling(window=5, min_periods=1).mean().shift(1),
-            L10_PTS=df['PTS'].rolling(window=10, min_periods=1).mean().shift(1),
-            L5_MIN=df['MP_Float'].rolling(window=5, min_periods=1).mean().shift(1),
-            L5_FGA=df['FGA'].rolling(window=5, min_periods=1).mean().shift(1),
-            L5_USG=(df['FGA'].rolling(5).sum().shift(1)) / (df['MP_Float'].rolling(5).sum().shift(1) + 0.1),
-            Season_Avg_PTS=df['PTS'].expanding().mean().shift(1)
-        )
+        team_net_val = adv_stats.loc[adv_stats['TEAM_ID'] == current_team_id, 'NET_RATING'] if 'NET_RATING' in adv_stats.columns else pd.Series([0.0])
+        team_net_val = team_net_val.iloc[0] if not team_net_val.empty else 0.0
         
-        df = df.assign(Trend_Multiplier=df['L5_PTS'] / (df['Season_Avg_PTS'] + 0.1))
+        df['Blowout_Risk'] = (team_net_val - df['Opp_Net_Rating']).abs()
 
-        df = df.bfill()
+        df['L5_PPM'] = df['PPM'].rolling(window=5, min_periods=1).mean().shift(1)
+        df['L3_PTS'] = df['PTS'].rolling(window=3, min_periods=1).mean().shift(1)
+        df['L5_PTS'] = df['PTS'].rolling(window=5, min_periods=1).mean().shift(1)
+        df['L10_PTS'] = df['PTS'].rolling(window=10, min_periods=1).mean().shift(1)
+        
+        df['L5_MIN'] = df['MP_Float'].rolling(window=5, min_periods=1).mean().shift(1)
+        df['L5_FGA'] = df['FGA'].rolling(window=5, min_periods=1).mean().shift(1)
+        df['L5_USG'] = (df['FGA'].rolling(5).sum().shift(1)) / (df['MP_Float'].rolling(5).sum().shift(1) + 0.1)
+        df['Season_Avg_PTS'] = df['PTS'].expanding().mean().shift(1)
+        df['Trend_Multiplier'] = df['L5_PTS'] / (df['Season_Avg_PTS'] + 0.1)
+
+        df = df.bfill() 
         df = df.fillna(0)
 
         return df
@@ -80,7 +85,7 @@ class Predictor:
     def predict_next_game(self, player_df, adv_stats, team_map, current_team_id, next_game_data, experience):
         target_opp_id = next_game_data.get('Opp_ID')
         
-        engineered_df = self.prepare_data(player_df, adv_stats, team_map, current_team_id)
+        engineered_df = self.prepare_data(player_df, adv_stats, team_map, current_team_id, experience)
         
         X = engineered_df[self.feature_cols].to_numpy()
         y = engineered_df['PTS'].to_numpy()
@@ -100,14 +105,15 @@ class Predictor:
         last_recovery_val = engineered_df.iloc[-1]['Return_From_Injury']
         next_recovery_val = 1.0 if next_game_rest >= 7 else max(0.0, last_recovery_val - 0.2)
         
-        target_stats = adv_stats[adv_stats['TEAM_ID'] == target_opp_id]
-        target_def_val = target_stats['DEF_RATING'].iloc[0] if not target_stats.empty else 115.0
-        target_pace_val = target_stats['PACE'].iloc[0] if not target_stats.empty else 100.0
-        target_net_val = target_stats['NET_RATING'].iloc[0] if not target_stats.empty else 0.0
+        target_stats = adv_stats[adv_stats['TEAM_ID'] == target_opp_id] if 'TEAM_ID' in adv_stats.columns else pd.DataFrame()
+        target_def_val = target_stats['DEF_RATING'].iloc[0] if not target_stats.empty and 'DEF_RATING' in target_stats.columns else 115.0
+        target_pace_val = target_stats['PACE'].iloc[0] if not target_stats.empty and 'PACE' in target_stats.columns else 100.0
+        target_net_val = target_stats['NET_RATING'].iloc[0] if not target_stats.empty and 'NET_RATING' in target_stats.columns else 0.0
         
-        team_net_val = adv_stats.loc[adv_stats['TEAM_ID'] == current_team_id, 'NET_RATING']
+        team_net_val = adv_stats.loc[adv_stats['TEAM_ID'] == current_team_id, 'NET_RATING'] if 'TEAM_ID' in adv_stats.columns and 'NET_RATING' in adv_stats.columns else pd.Series([0.0])
         team_net_val = team_net_val.iloc[0] if not team_net_val.empty else 0.0
-        next_blowout_risk = abs(team_net_val - target_net_val)
+        
+        next_blowout_risk = min(abs(team_net_val - target_net_val), 10.0)
         
         current_l3_pts = player_df['PTS'].tail(3).mean()
         current_l5_pts = player_df['PTS'].tail(5).mean()
@@ -124,10 +130,9 @@ class Predictor:
 
         safe_l5 = 0.0 if pd.isna(current_l5_pts) else float(current_l5_pts)
         safe_avg = 0.0 if pd.isna(current_season_avg) else float(current_season_avg)
-        
         dynamic_base = safe_l5 if experience == 0 else safe_avg
         if pd.isna(dynamic_base) or dynamic_base <= 0:
-            dynamic_base = 0.5
+            dynamic_base = 0.5 
 
         next_game_features = np.array([[
             next_game_data['Home'],                          
@@ -143,6 +148,7 @@ class Predictor:
             current_l5_fga,                                  
             current_l5_usg,                                  
             current_season_avg,
+            1 if experience == 0 else 0,
             current_ppm,
             current_trend
         ]])
@@ -150,11 +156,13 @@ class Predictor:
         xgb_model = xgb.XGBRegressor(
             objective='reg:squarederror', 
             random_state=42,
-            n_estimators=100,      
+            n_estimators=70,
             learning_rate=0.05,    
-            max_depth=3,
+            max_depth=2,
             subsample=0.8,
-            base_score=dynamic_base,
+            colsample_bytree=0.8,
+            min_child_weight=3,
+            base_score=dynamic_base,  
             n_jobs=-1              
         )
         
@@ -162,6 +170,8 @@ class Predictor:
         prediction = xgb_model.predict(next_game_features)[0]
         
         if experience == 0:
-            prediction = (prediction * 0.6) + (safe_l5 * 0.4)
+            prediction = (prediction * 0.5) + (safe_l5 * 0.5)
+        else:
+            prediction = (prediction * 0.5) + (safe_avg * 0.3) + (safe_l5 * 0.2)
             
         return prediction

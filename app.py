@@ -42,17 +42,23 @@ def stream_predict(team_abbr):
             
             yield f"data: {json.dumps({'status': 'info', 'message': 'Pre-fetching rookie data...'})}\n\n"
             team_exp_map = scraper.get_team_experience_data(team_abbr)
-            
+
             yield f"data: {json.dumps({'status': 'info', 'message': 'Mining expected starting lineup...'})}\n\n"
-            projected_starters = scraper.get_projected_lineup(team_abbr)
+            projected_data = scraper.get_projected_lineup(team_abbr)
             
-            if not projected_starters:
+            if isinstance(projected_data, tuple):
+                active_rotation, injured_out = projected_data
+            else:
+                active_rotation = projected_data
+                injured_out = []
+                
+            if not active_rotation:
                 yield f"data: {json.dumps({'status': 'warning', 'player': 'System Data', 'message': 'Failed to find expected lineup.'})}\n\n"
                 yield f"data: {json.dumps({'status': 'complete', 'message': 'Process stopped.'})}\n\n"
                 return
 
-            yield f"data: {json.dumps({'status': 'info', 'message': 'Executing Mega-Query for all player logs...'})}\n\n"
-            all_player_data = scraper.get_bulk_player_gamelogs(projected_starters)
+            yield f"data: {json.dumps({'status': 'info', 'message': f'Executing Mega-Query for {len(active_rotation)} active players...'})}\n\n"
+            all_player_data = scraper.get_bulk_player_gamelogs(active_rotation)
 
             final_player_list = list(all_player_data.keys())
             total_players = len(final_player_list)
@@ -71,7 +77,10 @@ def stream_predict(team_abbr):
                     for _, row in recent_games.iterrows():
                         raw_date = str(row['GAME_DATE']).split(' ')[0]
                         split_date = raw_date.split('-')
-                        clean_date = f"{split_date[1]}/{split_date[2]}"
+                        if len(split_date) >= 3:
+                            clean_date = f"{split_date[1]}/{split_date[2]}"
+                        else:
+                            clean_date = raw_date
                         history.append({
                             "game_date": clean_date, 
                             "pts": int(row['PTS']),
