@@ -413,12 +413,11 @@ class BasketballReferenceScraper:
                             is_home = True
                             found_game = True
 
-                # --- NEW: SCHEDULE DENSITY (GAMES IN LAST 7 DAYS) ---
                 if found_game:
                     target_date_obj = datetime.strptime(date_str, '%Y-%m-%d')
                     seven_days_ago = target_date_obj - timedelta(days=7)
                     
-                    games_in_7 = 2 # Default fallback
+                    games_in_7 = 2
                     try:
                         time.sleep(0.5)
                         t_log = teamgamelog.TeamGameLog(team_id=team_id, season=season_str).get_data_frames()[0]

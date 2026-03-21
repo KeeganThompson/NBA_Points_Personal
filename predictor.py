@@ -21,7 +21,7 @@ class Predictor:
             'Is_Center',
             'MIN_StdDev',        
             'PPM_StdDev',
-            'Games_In_7_Days'    # NEW: Schedule Density Metric     
+            'Games_In_7_Days' 
         ]
 
     def convert_minutes(self, x):
@@ -65,8 +65,6 @@ class Predictor:
         
         df = df.sort_values('GAME_DATE').reset_index(drop=True)
         
-        # --- NEW: HISTORICAL SCHEDULE DENSITY ---
-        # AI learns what happens when a player plays 4 games in 7 days historically
         df_idx = df.set_index('GAME_DATE').sort_index()
         df['Games_In_7_Days'] = df_idx['PTS'].rolling('7D').count().values - 1
         
@@ -201,7 +199,6 @@ class Predictor:
         dynamic_base = proj_minutes * safe_l10_ppm
         if pd.isna(dynamic_base) or dynamic_base <= 0: dynamic_base = 0.5 
 
-        # Retrieve the new schedule density
         games_in_7 = next_game_data.get('Games_In_7_Days', 2.0)
 
         next_game_features = np.array([[
@@ -228,7 +225,7 @@ class Predictor:
             1 if position == 'C' else 0,
             current_min_std,
             current_ppm_std,
-            games_in_7 # <-- Newly fed into XGBoost
+            games_in_7 
         ]])
 
         xgb_model = xgb.XGBRegressor(
@@ -276,9 +273,8 @@ class Predictor:
             if current_l5_min >= 30.0: multiplier *= 0.90  
             elif current_l5_min <= 15.0: multiplier *= 1.10
                 
-        # --- EXPLICIT HEAVY LEGS PENALTY (4 Games in 7 Nights) ---
         if games_in_7 >= 4.0:
-            multiplier *= 0.95 # Additional 5% tax for exhaustion
+            multiplier *= 0.95
         if next_game_rest <= 1:
             multiplier *= 0.92 if experience >= 5 else 0.96 
             

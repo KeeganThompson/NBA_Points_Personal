@@ -26,7 +26,6 @@ def get_teams():
 def stream_predict(team_abbr):
     def generate():
         try:
-            # --- NEW: Load the Vegas Props Cache ---
             vegas_lines = {}
             if os.path.exists('vegas_props.json'):
                 try:
@@ -117,8 +116,6 @@ def stream_predict(team_abbr):
                     
                     avg_10 = sum(h['pts'] for h in history) / len(history) if history else 0
                     
-                    # --- FETCH VEGAS LINE FROM CACHE ---
-                    # --- FETCH VEGAS LINE FROM CACHE ---
                     v_line = vegas_lines.get(player, None)
                     if v_line is None:
                         import unicodedata
@@ -151,7 +148,7 @@ def stream_predict(team_abbr):
                         "floor": round(model_output["floor"], 1),
                         "ceiling": round(model_output["ceiling"], 1),
                         "avg_10": round(avg_10, 1),
-                        "vegas_line": v_line,  # <-- Passed to frontend
+                        "vegas_line": v_line,
                         "history": history
                     }
                     

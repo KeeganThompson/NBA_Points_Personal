@@ -15,13 +15,11 @@ class LineupOptimizer:
         plus a baseline floor for active players.
         """
         if pd.isna(avg_pts) or avg_pts <= 0:
-            return 3000 # Minimum DK Salary
+            return 3000
         
         base_salary = (avg_pts * 250) + 1500
-        # Round to the nearest $100
         salary = int(math.ceil(base_salary / 100.0)) * 100
         
-        # Apply standard DraftKings Min/Max caps
         return max(3000, min(salary, 12500))
 
     def mock_positions(self):
@@ -32,7 +30,6 @@ class LineupOptimizer:
         """
         positions = []
         for i, row in self.df.iterrows():
-            # Crude mock for testing: Assign based on index to ensure a mix
             if i % 5 == 0: positions.append('C')
             elif i % 2 == 0: positions.append('F')
             else: positions.append('G')
@@ -41,19 +38,14 @@ class LineupOptimizer:
     def prepare_data(self):
         print("📊 Loading Player Pool and generating salaries...")
         
-        # Clean the dataframe
         self.df = self.df.dropna(subset=['Predicted', '10_Game_Avg'])
         
-        # Generate Salaries
         self.df['Salary'] = self.df['10_Game_Avg'].apply(self.mock_draftkings_salary)
         
-        # Generate Positions
         self.df['Pos'] = self.mock_positions()
         
-        # Calculate Value (Points per $1,000)
         self.df['Value_Rating'] = (self.df['Predicted'] / self.df['Salary']) * 1000
         
-        # Sort by best value
         self.df = self.df.sort_values('Value_Rating', ascending=False).reset_index(drop=True)
 
     def optimize(self, strategy="median"):
@@ -68,35 +60,26 @@ class LineupOptimizer:
         """
         print(f"\n🧠 Running PuLP Linear Optimizer (Strategy: {strategy.upper()})...")
         
-        # 1. Define the Problem (We want to MAXIMIZE points)
         prob = pulp.LpProblem("DFS_Optimal_Lineup", pulp.LpMaximize)
         
         num_players = len(self.df)
         
-        # 2. Create Binary Variables (1 if player is in lineup, 0 if not)
         player_vars = [pulp.LpVariable(f"player_{i}", cat="Binary") for i in range(num_players)]
         
-        # 3. Set the Objective Function (Maximize Total Prediction)
         if strategy == "ceiling":
-            # GPP Tournament strategy: Maximize the 80th Percentile Ceiling
             target_metric = self.df['Ceiling'].tolist()
         else:
-            # Cash Game strategy: Maximize the safest Median prediction
             target_metric = self.df['Predicted'].tolist()
             
         prob += pulp.lpSum([target_metric[i] * player_vars[i] for i in range(num_players)])
         
-        # 4. Set Constraints
         salaries = self.df['Salary'].tolist()
         positions = self.df['Pos'].tolist()
         
-        # Constraint A: Exactly 8 players
         prob += pulp.lpSum([player_vars[i] for i in range(num_players)]) == 8
         
-        # Constraint B: Salary <= $50,000
         prob += pulp.lpSum([salaries[i] * player_vars[i] for i in range(num_players)]) <= 50000
         
-        # Constraint C: Positional Limits
         is_guard = [1 if pos == 'G' else 0 for pos in positions]
         is_forward = [1 if pos == 'F' else 0 for pos in positions]
         is_center = [1 if pos == 'C' else 0 for pos in positions]
@@ -105,14 +88,12 @@ class LineupOptimizer:
         prob += pulp.lpSum([is_forward[i] * player_vars[i] for i in range(num_players)]) >= 3
         prob += pulp.lpSum([is_center[i] * player_vars[i] for i in range(num_players)]) >= 1
         
-        # 5. Solve the Knapsack Problem
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
         
         if pulp.LpStatus[prob.status] != 'Optimal':
             print("❌ Could not find a valid lineup under the constraints.")
             return
             
-        # 6. Extract the Results
         lineup = []
         total_salary = 0
         total_proj = 0
@@ -131,7 +112,6 @@ class LineupOptimizer:
                 total_salary += p['Salary']
                 total_proj += p['Predicted'] if strategy == "median" else p['Ceiling']
                 
-        # Sort lineup for clean printing
         pos_order = {'G': 1, 'F': 2, 'C': 3}
         lineup.sort(key=lambda x: (pos_order.get(x['Pos'], 4), -x['Salary']))
         
@@ -149,15 +129,11 @@ class LineupOptimizer:
         print("=======================================================\n")
 
 if __name__ == "__main__":
-    # Ensure you have a generated CSV file in your folder to test this against!
     try:
-        # Try to use the backtest results to build a "Mega Slate" lineup
         opt = LineupOptimizer("Backtest_Results.csv")
         
-        # Generate the safest Cash Game lineup (Optimizes for Median Prediction)
         opt.optimize(strategy="median")
         
-        # Generate a high-variance Tournament lineup (Optimizes for 80th Percentile Ceiling)
         opt.optimize(strategy="ceiling")
         
     except FileNotFoundError:

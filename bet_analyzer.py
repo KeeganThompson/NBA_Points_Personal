@@ -24,12 +24,12 @@ class BetAnalyzer:
         """
         edge = pred - line
         
-        if edge > 0: # OVER
+        if edge > 0:
             if floor > line: return 5, "⭐⭐⭐⭐⭐ (Floor clears Line)"
             elif pred >= line + 3.0: return 4, "⭐⭐⭐⭐ (Massive Median Edge)"
             elif pred >= line + 1.5: return 3, "⭐⭐⭐ (Solid Edge)"
             else: return 2, "⭐⭐ (Lean)"
-        else: # UNDER
+        else:
             if ceiling < line: return 5, "⭐⭐⭐⭐⭐ (Ceiling under Line)"
             elif pred <= line - 3.0: return 4, "⭐⭐⭐⭐ (Massive Median Edge)"
             elif pred <= line - 1.5: return 3, "⭐⭐⭐ (Solid Edge)"
@@ -68,7 +68,6 @@ class BetAnalyzer:
             floor = float(row['Floor'])
             ceil = float(row['Ceiling'])
             
-            # --- NEW: STRICT FUZZY MATCHING ---
             v_line = vegas_data.get(player)
             if v_line is None:
                 clean_player = self._normalize_name(player)
@@ -82,12 +81,10 @@ class BetAnalyzer:
                         v_line = line
                         break
                         
-                    # Catch Nic/Nicolas and Cam/Cameron, but absolutely REJECT Jalen/Josh
                     if len(p_parts) >= 2 and len(v_parts) >= 2:
-                        if p_parts[-1] == v_parts[-1]: # Last names match perfectly
+                        if p_parts[-1] == v_parts[-1]:
                             f1 = p_parts[0]
                             f2 = v_parts[0]
-                            # First names must match, OR be a valid >= 3 letter subset (e.g. 'cam' in 'cameron')
                             if f1 == f2 or (len(f1) >= 3 and f1 in f2) or (len(f2) >= 3 and f2 in f1):
                                 v_line = line
                                 break

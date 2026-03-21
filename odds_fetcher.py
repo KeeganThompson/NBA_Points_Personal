@@ -2,7 +2,6 @@ import requests
 import json
 from datetime import datetime
 
-# Your actual API Key
 API_KEY = '56280a5d9570359d7171919e38f88fbf'
 SPORT = 'basketball_nba'
 REGIONS = 'us'
@@ -11,7 +10,6 @@ MARKETS = 'player_points'
 def fetch_vegas_lines():
     print("🌐 Connecting to The Odds API...")
     
-    # 1. Get all upcoming NBA events
     events_url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/events"
     events_res = requests.get(events_url, params={'apiKey': API_KEY})
     
@@ -25,7 +23,6 @@ def fetch_vegas_lines():
     vegas_data = {}
     requests_used = 1
 
-    # 2. Get player props for each event
     for event in events:
         event_id = event['id']
         matchup = f"{event['away_team']} @ {event['home_team']}"
@@ -44,7 +41,6 @@ def fetch_vegas_lines():
             
         odds_json = odds_res.json()
         
-        # 3. Parse the sportsbooks to find the consensus line
         for bookmaker in odds_json.get('bookmakers', []):
             for market in bookmaker.get('markets', []):
                 if market['key'] == 'player_points':
@@ -57,14 +53,11 @@ def fetch_vegas_lines():
                                 vegas_data[player_name] = []
                             vegas_data[player_name].append(line)
 
-    # 4. Average the lines and save
     final_lines = {}
     for player, lines in vegas_data.items():
-        # Average the lines across all sportsbooks for the sharpest number
         consensus_line = round(sum(lines) / len(lines), 1)
         final_lines[player] = consensus_line
 
-    # Save to a local cache file
     with open('vegas_props.json', 'w') as f:
         json.dump({
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

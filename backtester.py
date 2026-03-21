@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from nba_api.stats.endpoints import leaguegamelog, commonteamroster
 from predictor import Predictor
 
-# --- MUTE VERBOSE AI WARNINGS ---
 warnings.filterwarnings('ignore')
 
 class WalkForwardBacktester:
@@ -34,7 +33,6 @@ class WalkForwardBacktester:
         self.master_log.columns = [str(col).upper().replace('_', '') for col in self.master_log.columns]
         self.master_log['GAMEDATE'] = pd.to_datetime(self.master_log['GAMEDATE'])
         
-        # Build Team Map
         team_log = leaguegamelog.LeagueGameLog(
             player_or_team_abbreviation='T', season=self.season_str
         ).get_data_frames()[0]
@@ -48,7 +46,7 @@ class WalkForwardBacktester:
         print("📥 Fetching Player Positions and Metadata (Pulling 30 rosters - takes ~15s)...")
         for abbr, tid in self.team_map.items():
             try:
-                time.sleep(0.4) # Prevent API ban
+                time.sleep(0.4)
                 roster = commonteamroster.CommonTeamRoster(team_id=tid, season=self.season_str).get_data_frames()[0]
                 cols = [str(col).upper().replace('_', '') for col in roster.columns]
                 roster.columns = cols
@@ -102,11 +100,10 @@ class WalkForwardBacktester:
         team_log = historical_log.groupby(['TEAMID', 'GAMEID']).agg({'PTS': 'sum', 'MIN': 'sum'}).reset_index()
         
         res = pd.DataFrame()
-        # Simplified for speed: Assigning average pace and net rating based on raw points
         team_avg = team_log.groupby('TEAMID')['PTS'].mean().reset_index()
         res['TEAM_ID'] = team_avg['TEAMID']
-        res['PACE'] = 100.0 # Static pace for backtester
-        res['NET_RATING'] = (team_avg['PTS'] - 110.0) # Crude Net Rating estimation
+        res['PACE'] = 100.0
+        res['NET_RATING'] = (team_avg['PTS'] - 110.0)
         return res
 
     def run_backtest(self):
@@ -124,7 +121,6 @@ class WalkForwardBacktester:
         for i in range(self.days_to_test + 1):
             target_date = start_date + timedelta(days=i)
             
-            # The "Time Machine" slice: ONLY data strictly BEFORE the target date
             past_data = self.master_log[self.master_log['GAMEDATE'] < target_date].copy()
             todays_games = self.master_log[self.master_log['GAMEDATE'] == target_date].copy()
             
