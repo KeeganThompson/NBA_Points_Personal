@@ -11,7 +11,6 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
     """
     print(f"Fetching actual box scores from NBA API for {game_date_str}...")
     try:
-        # Fetch actual game logs for the entire league on that specific date
         log = leaguegamelog.LeagueGameLog(
             season=season,
             date_from_nullable=game_date_str,
@@ -19,13 +18,11 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
             player_or_team_abbreviation='P'
         ).get_data_frames()[0]
         
-        # Standardize names to lowercase for safe merging
         log['PLAYER_NAME'] = log['PLAYER_NAME'].str.lower()
     except Exception as e:
         print(f"Failed to fetch API data: {e}")
         return
 
-    # Find all CSV files in the target directory
     csv_pattern = os.path.join(predictions_folder, "*.csv")
     csv_files = glob.glob(csv_pattern)
     
@@ -35,7 +32,6 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
 
     all_predictions = []
     
-    # Read and combine all team predictions from the folder
     for file in csv_files:
         try:
             df = pd.read_csv(file)
@@ -46,8 +42,6 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
     combined_preds = pd.concat(all_predictions, ignore_index=True)
     combined_preds['Player_Lower'] = combined_preds['Player'].str.lower()
     
-    # Merge predictions with actuals
-    # Using 'inner' join automatically drops players who were scratched/DNP
     merged = pd.merge(
         combined_preds, 
         log[['PLAYER_NAME', 'PTS']], 
@@ -60,16 +54,13 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
         print("No players matched the actual box scores. Check your date formatting.")
         return
 
-    # 1. Calculate Absolute Errors
     merged['Model_Error'] = (merged['Predicted_PTS'] - merged['Actual_PTS']).abs()
     merged['Baseline_Error'] = (merged['10_Game_Avg'] - merged['Actual_PTS']).abs()
     
-    # 2. Calculate Directional Hit (Did the model correctly guess Over/Under the norm?)
     merged['Model_Direction'] = np.where(merged['Predicted_PTS'] > merged['10_Game_Avg'], 'Over', 'Under')
     merged['Actual_Direction'] = np.where(merged['Actual_PTS'] > merged['10_Game_Avg'], 'Over', 'Under')
     merged['Direction_Correct'] = (merged['Model_Direction'] == merged['Actual_Direction'])
 
-    # --- AGGREGATE METRICS ---
     total_players = len(merged)
     model_mae = merged['Model_Error'].mean()
     baseline_mae = merged['Baseline_Error'].mean()
@@ -77,7 +68,6 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
     within_5_pts = (merged['Model_Error'] <= 5.0).mean() * 100
     directional_accuracy = merged['Direction_Correct'].mean() * 100
     
-    # --- PRINT THE REPORT ---
     print("\n" + "="*55)
     print(f"   PREDICTION EVALUATION REPORT: {game_date_str}   ")
     print("="*55)
@@ -105,8 +95,7 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
         print(f" - {row['Player']}: Predicted {row['Predicted_PTS']}, Actual {row['Actual_PTS']} (Off by {row['Model_Error']:.1f})")
 
 if __name__ == '__main__':
-    # Define the exact folder housing yesterday's CSVs and the target API date
-    target_folder = r"Testing_Predictions/3_19_2026"
-    target_date = "03/19/2026" 
+    target_folder = r"Testing_Predictions/3_20_2026"
+    target_date = "03/20/2026" 
     
     evaluate_predictions(target_folder, target_date)

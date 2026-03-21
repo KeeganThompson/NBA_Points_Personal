@@ -22,7 +22,13 @@
         .progress-container { width: 100%; max-width: 600px; background-color: #e0e0e0; border-radius: 8px; margin: 10px auto; overflow: hidden; display: none; height: 15px; }
         .progress-bar { height: 100%; width: 0%; background-color: #c8102e; transition: width 0.4s ease; }
         
-        .dashboard { display: flex; gap: 20px; }
+        /* NEW: Blowout Risk Banner Styles */
+        #matchup-context-container { display: none; background-color: #f8f9fa; padding: 12px; border-radius: 8px; margin: 15px auto 0 auto; max-width: 600px; border: 1px solid #dee2e6;}
+        .risk-header { margin: 0 0 5px 0; font-size: 15px; color: #495057;}
+        .risk-details { margin: 0; font-size: 14px; display: flex; justify-content: center; align-items: center; gap: 10px;}
+        #blowout-badge { padding: 4px 10px; border-radius: 6px; font-weight: bold; font-size: 13px; }
+
+        .dashboard { display: flex; gap: 20px; margin-top: 20px; }
         .player-list { flex: 1; display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; padding-right: 10px;}
         .chart-area { flex: 2; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: none;}
         
@@ -59,6 +65,14 @@
         <div id="status-text">Connecting to prediction engine...</div>
         <div class="progress-container" id="progress-container">
             <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <div id="matchup-context-container">
+            <h4 class="risk-header">Matchup Context (Net Rating Diff)</h4>
+            <div class="risk-details">
+                <strong>Blowout Risk:</strong> <span id="blowout-risk-val">--</span> 
+                <span id="blowout-badge"></span>
+            </div>
         </div>
     </div>
     
@@ -105,6 +119,7 @@
         document.getElementById('playerList').innerHTML = '';
         document.getElementById('chartArea').style.display = 'none';
         document.getElementById('csvBtn').style.display = 'none';
+        document.getElementById('matchup-context-container').style.display = 'none'; // Hide banner on new query
         
         const statusText = document.getElementById('status-text');
         const progContainer = document.getElementById('progress-container');
@@ -126,6 +141,31 @@
             if (data.status === 'info') {
                 statusText.innerText = data.message;
             } 
+            else if (data.status === 'matchup_info') {
+                // NEW: Handle the matchup info payload
+                document.getElementById('matchup-context-container').style.display = 'block';
+                
+                let risk = data.blowout_risk;
+                document.getElementById('blowout-risk-val').innerText = risk;
+                
+                let badge = document.getElementById('blowout-badge');
+                if (risk >= 15.0) {
+                    badge.innerText = "SEVERE (Minutes Likely Cut)";
+                    badge.style.backgroundColor = "#f8d7da"; // Light red
+                    badge.style.color = "#721c24"; // Dark red
+                    badge.style.border = "1px solid #f5c6cb";
+                } else if (risk >= 10.0) {
+                    badge.innerText = "HIGH (Slight Minute Risk)";
+                    badge.style.backgroundColor = "#fff3cd"; // Light yellow
+                    badge.style.color = "#856404"; // Dark yellow
+                    badge.style.border = "1px solid #ffeeba";
+                } else {
+                    badge.innerText = "LOW (Competitive Game)";
+                    badge.style.backgroundColor = "#d4edda"; // Light green
+                    badge.style.color = "#155724"; // Dark green
+                    badge.style.border = "1px solid #c3e6cb";
+                }
+            }
             else if (data.status === 'progress') {
                 statusText.innerText = data.message;
                 const percent = (data.current / data.total) * 100;
@@ -183,6 +223,21 @@
         const colorClass = isOverAvg ? 'green' : 'red';
         const arrow = isOverAvg ? '▲' : '▼';
 
+        // NEW: Calculate the Vegas Edge
+        let vegasHtml = '';
+        if (player.vegas_line !== null && player.vegas_line !== undefined) {
+            let diff = (player.prediction - player.vegas_line).toFixed(1);
+            let edgeColor = diff > 2.0 ? '#28a745' : (diff < -2.0 ? '#dc3545' : '#6c757d');
+            let edgeText = diff > 0 ? `+${diff} EDGE (OVER)` : `${diff} EDGE (UNDER)`;
+            
+            vegasHtml = `
+                <div style="margin-top: 8px; padding: 5px; background: #f8f9fa; border-radius: 4px; border: 1px solid #dee2e6;">
+                    <span style="font-size: 13px;">Vegas Line: <strong>${player.vegas_line}</strong></span><br>
+                    <span style="font-size: 13px; font-weight: bold; color: ${edgeColor};">${edgeText}</span>
+                </div>
+            `;
+        }
+
         const card = document.createElement('div');
         card.className = 'card';
         card.onclick = () => showChart(player.name);
@@ -191,7 +246,9 @@
             <h3>${player.name}</h3>
             <p>vs. ${nextOpponent}</p>
             <p class="metric ${colorClass}">Predicted: ${player.prediction} PTS ${arrow}</p>
+            <p>Range: <span style="font-weight:600; color:#495057;">[${player.floor} - ${player.ceiling}]</span></p>
             <p>10-Game Avg: ${player.avg_10} PTS</p>
+            ${vegasHtml}
         `;
         listDiv.appendChild(card);
     }
@@ -277,11 +334,11 @@
     function downloadCSV() {
         if (currentTeamData.length === 0) return;
         
-        let csvContent = "Player,Opponent,Predicted_PTS,10_Game_Avg,Difference\n";
+        let csvContent = "Player,Opponent,Predicted_PTS,Floor,Ceiling,10_Game_Avg,Difference\n";
         
         currentTeamData.forEach(player => {
             let diff = (player.prediction - player.avg_10).toFixed(1);
-            let row = `"${player.name}","${nextOpponent}",${player.prediction},${player.avg_10},${diff}`;
+            let row = `"${player.name}","${nextOpponent}",${player.prediction},${player.floor},${player.ceiling},${player.avg_10},${diff}`;
             csvContent += row + "\n";
         });
         
