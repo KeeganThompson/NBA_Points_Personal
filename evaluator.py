@@ -106,7 +106,7 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
 
 if __name__ == '__main__':
     # Define the exact folder housing yesterday's CSVs and the target API date
-    target_folder = r"Testing_Predictions/3_19_2026"
-    target_date = "03/19/2026" 
+    target_folder = r"Testing_Predictions/3_20_2026"
+    target_date = "03/20/2026" 
     
     evaluate_predictions(target_folder, target_date)

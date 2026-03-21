@@ -5,3 +5,5 @@ scikit-learn
 xgboost
 flask
 beautifulsoup4
+lightgbm
+pulp
