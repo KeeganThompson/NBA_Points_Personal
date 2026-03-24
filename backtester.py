@@ -25,7 +25,7 @@ class WalkForwardBacktester:
         return 'F'
 
     def fetch_master_data(self):
-        print("📥 Downloading full season baseline (This takes ~10 seconds)...")
+        print("Downloading full season baseline...")
         time.sleep(1)
         self.master_log = leaguegamelog.LeagueGameLog(
             player_or_team_abbreviation='P', season=self.season_str
@@ -43,10 +43,10 @@ class WalkForwardBacktester:
             if abbr not in self.team_map:
                 self.team_map[abbr] = tid
 
-        print("📥 Fetching Player Positions and Metadata (Pulling 30 rosters - takes ~15s)...")
+        print("Fetching Player Positions and Metadata (Pulling 30 rosters)...")
         for abbr, tid in self.team_map.items():
             try:
-                time.sleep(0.4)
+                time.sleep(0.4) 
                 roster = commonteamroster.CommonTeamRoster(team_id=tid, season=self.season_str).get_data_frames()[0]
                 cols = [str(col).upper().replace('_', '') for col in roster.columns]
                 roster.columns = cols
@@ -77,7 +77,6 @@ class WalkForwardBacktester:
                 pass
 
     def calculate_point_in_time_dvp(self, historical_log):
-        """Calculates 1-30 DvP using ONLY data that existed before the target date"""
         valid_logs = historical_log.dropna(subset=['PTS']).copy()
         valid_logs['OPP'] = valid_logs['MATCHUP'].apply(lambda x: str(x).split(' ')[-1])
         valid_logs['POS'] = valid_logs['PLAYERNAME'].map(lambda x: self.player_meta.get(x, {}).get('pos', 'F'))
@@ -96,14 +95,13 @@ class WalkForwardBacktester:
         return dvp_ranks
 
     def calculate_point_in_time_adv_stats(self, historical_log):
-        """Estimates Team Net Rating based on point differentials up to the target date"""
         team_log = historical_log.groupby(['TEAMID', 'GAMEID']).agg({'PTS': 'sum', 'MIN': 'sum'}).reset_index()
         
         res = pd.DataFrame()
         team_avg = team_log.groupby('TEAMID')['PTS'].mean().reset_index()
         res['TEAM_ID'] = team_avg['TEAMID']
-        res['PACE'] = 100.0
-        res['NET_RATING'] = (team_avg['PTS'] - 110.0)
+        res['PACE'] = 100.0 
+        res['NET_RATING'] = (team_avg['PTS'] - 110.0) 
         return res
 
     def run_backtest(self):
@@ -117,6 +115,7 @@ class WalkForwardBacktester:
         print(f"Testing from {start_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}\n")
         
         results = []
+        errors_caught = 0
         
         for i in range(self.days_to_test + 1):
             target_date = start_date + timedelta(days=i)
@@ -131,6 +130,21 @@ class WalkForwardBacktester:
             
             dvp_ranks = self.calculate_point_in_time_dvp(past_data)
             adv_stats = self.calculate_point_in_time_adv_stats(past_data)
+            
+            team_game_logs = todays_games.copy()
+            team_ids_playing_today = team_game_logs['TEAMID'].unique()
+            
+            vacated_map = {}
+            for tid in team_ids_playing_today:
+                team_past = past_data[past_data['TEAMID'] == tid]
+                if team_past.empty: continue
+                
+                player_avgs = team_past.groupby('PLAYERNAME')['PTS'].mean()
+                top_8_scorers = player_avgs.nlargest(8).index.tolist()
+                
+                active_today = team_game_logs[team_game_logs['TEAMID'] == tid]['PLAYERNAME'].tolist()
+                missing_pts = sum(player_avgs[p] for p in top_8_scorers if p not in active_today)
+                vacated_map[tid] = missing_pts
             
             for _, row in todays_games.iterrows():
                 player_name = row['PLAYERNAME']
@@ -158,15 +172,18 @@ class WalkForwardBacktester:
                 player_df['PTS'] = player_hist['PTS']
                 
                 next_game_data = {
-                    "Opp": opp_abbr, "Opp_ID": opp_id, "Home": is_home, "Date": target_date.strftime('%Y-%m-%d')
+                    "Opp": opp_abbr, "Opp_ID": opp_id, "Home": is_home, "Date": target_date.strftime('%Y-%m-%d'),
+                    "Games_In_7_Days": 2.0 
                 }
                 
                 meta = self.player_meta.get(player_name, {'pos': 'F', 'exp': 5})
+                todays_vacated_pts = vacated_map.get(current_team_id, 0.0)
                 
                 try:
                     preds = self.proc.predict_next_game(
                         player_df, adv_stats, self.team_map, current_team_id, 
-                        next_game_data, meta['exp'], meta['pos'], dvp_ranks, is_starter=False
+                        next_game_data, meta['exp'], meta['pos'], dvp_ranks, 
+                        is_starter=False, vacated_pts=todays_vacated_pts
                     )
                     
                     recent_10 = player_df['PTS'].tail(10).mean()
@@ -181,8 +198,16 @@ class WalkForwardBacktester:
                         'Actual': actual_pts
                     })
                 except Exception as e:
+                    if errors_caught == 0:
+                        print(f"[DEBUG] First crash caught on {player_name}: {e}")
+                    errors_caught += 1
                     pass
-                    
+        
+        if not results:
+            print("\nFATAL ERROR: Zero players were successfully predicted.")
+            print(f"Caught {errors_caught} background errors. Check the debug message above to fix the matrix!")
+            return
+            
         df_res = pd.DataFrame(results)
         df_res['Error'] = abs(df_res['Predicted'] - df_res['Actual'])
         df_res['Base_Error'] = abs(df_res['10_Game_Avg'] - df_res['Actual'])
@@ -203,13 +228,13 @@ class WalkForwardBacktester:
         profit = (wins * 90.90) - ((total_bets - wins) * 100)
         
         print("\n=======================================================")
-        print(" 📈 BACKTESTING RESULTS (LAST 10 DAYS)")
+        print("BACKTESTING RESULTS (LAST 10 DAYS)")
         print("=======================================================")
         print(f"Total Player Games Simulated: {len(df_res)}")
         print(f"AI Ensemble MAE:              {df_res['Error'].mean():.2f} PTS")
         print(f"Baseline (10-Game Avg) MAE:   {df_res['Base_Error'].mean():.2f} PTS")
         print("-------------------------------------------------------")
-        print(" 💰 HYPOTHETICAL BETTING SIMULATION (-110 Odds)")
+        print("HYPOTHETICAL BETTING SIMULATION (-110 Odds)")
         print(" Strategy: Bet $100 when AI prediction differs from 10-Game Avg by 2.5+ pts")
         print("-------------------------------------------------------")
         print(f"Total Bets Placed:  {total_bets}")

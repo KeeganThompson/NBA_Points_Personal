@@ -4,9 +4,12 @@ import time
 import requests
 from bs4 import BeautifulSoup
 import unicodedata
+import warnings
+
+warnings.filterwarnings('ignore')
 
 from nba_api.stats.static import players, teams
-from nba_api.stats.endpoints import playergamelog, teamgamelog, leaguedashteamstats, commonteamroster, leaguegamelog, boxscoretraditionalv2, leaguedashplayerbiostats
+from nba_api.stats.endpoints import playergamelog, teamgamelog, leaguedashteamstats, commonteamroster, leaguegamelog, boxscoretraditionalv2, leaguedashplayerbiostats, synergyplaytypes
 
 try:
     from nba_api.stats.endpoints import scoreboardv3
@@ -149,7 +152,7 @@ class BasketballReferenceScraper:
                         if len(cols) >= 4:
                             name = cols[0].text.strip()
                             status = cols[3].text.strip()
-                            if 'Out' in status: 
+                            if 'Out' in status or 'Day-To-Day' in status or 'DTD' in status: 
                                 out_players.append(name)
         except Exception:
             pass
@@ -343,6 +346,32 @@ class BasketballReferenceScraper:
         ).get_data_frames()[0]
         df_l20.columns = [str(col).upper().replace('_', '') for col in df_l20.columns]
         
+        pnr_map = {}
+        spot_map = {}
+        try:
+            time.sleep(1.0)
+            pnr_def = synergyplaytypes.SynergyPlayTypes(
+                player_or_team_abbreviation='T',
+                play_type_nullable='PRBallHandler',
+                type_grouping_nullable='defensive',
+                season=season_str
+            ).get_data_frames()[0]
+            pnr_def.columns = [str(c).upper().replace('_', '') for c in pnr_def.columns]
+            pnr_map = dict(zip(pnr_def['TEAMID'], pnr_def['PPP']))
+        except: pass
+
+        try:
+            time.sleep(1.0)
+            spot_def = synergyplaytypes.SynergyPlayTypes(
+                player_or_team_abbreviation='T',
+                play_type_nullable='Spotup',
+                type_grouping_nullable='defensive',
+                season=season_str
+            ).get_data_frames()[0]
+            spot_def.columns = [str(c).upper().replace('_', '') for c in spot_def.columns]
+            spot_map = dict(zip(spot_def['TEAMID'], spot_def['PPP']))
+        except: pass
+
         for metric in ['PACE', 'NETRATING', 'OFFRATING', 'DEFRATING']:
             if metric not in df_full.columns: 
                 df_full[metric] = 100.0 if metric == 'PACE' else (115.0 if 'RATING' in metric else 0.0)
@@ -353,11 +382,14 @@ class BasketballReferenceScraper:
         
         res = pd.DataFrame()
         res['TEAM_ID'] = merged['TEAMID']
-        
         res['PACE'] = (merged['PACE_L20'] * 0.70) + (merged['PACE_FULL'] * 0.30)
         res['NET_RATING'] = (merged['NETRATING_L20'] * 0.70) + (merged['NETRATING_FULL'] * 0.30)
         res['OFF_RATING'] = (merged['OFFRATING_L20'] * 0.70) + (merged['OFFRATING_FULL'] * 0.30)
         res['DEF_RATING'] = (merged['DEFRATING_L20'] * 0.70) + (merged['DEFRATING_FULL'] * 0.30)
+        res['DEF_TREND'] = merged['DEFRATING_L20'] - merged['DEFRATING_FULL']
+        
+        res['DEF_PNR_PPP'] = res['TEAM_ID'].map(pnr_map).fillna(0.95)
+        res['DEF_SPOTUP_PPP'] = res['TEAM_ID'].map(spot_map).fillna(1.00)
         
         return res
 
@@ -426,15 +458,27 @@ class BasketballReferenceScraper:
                             t_log['GAME_DATE_CLN'] = pd.to_datetime(t_log[date_col])
                             recent_games = t_log[(t_log['GAME_DATE_CLN'] > seven_days_ago) & (t_log['GAME_DATE_CLN'] < target_date_obj)]
                             games_in_7 = len(recent_games)
-                    except:
-                        pass
+                    except: pass
+
+                    opp_games_in_7 = 2 
+                    try:
+                        if opp_id:
+                            time.sleep(0.5)
+                            o_log = teamgamelog.TeamGameLog(team_id=opp_id, season=season_str).get_data_frames()[0]
+                            o_date_col = next((c for c in o_log.columns if 'DATE' in str(c).upper()), None)
+                            if o_date_col:
+                                o_log['GAME_DATE_CLN'] = pd.to_datetime(o_log[o_date_col])
+                                o_recent = o_log[(o_log['GAME_DATE_CLN'] > seven_days_ago) & (o_log['GAME_DATE_CLN'] < target_date_obj)]
+                                opp_games_in_7 = len(o_recent)
+                    except: pass
                         
                     return {
                         "Opp": opp_abbr, 
                         "Opp_ID": opp_id, 
                         "Home": 1 if is_home else 0, 
                         "Date": date_str,
-                        "Games_In_7_Days": games_in_7
+                        "Games_In_7_Days": games_in_7,
+                        "Opp_Games_In_7_Days": opp_games_in_7
                     }
             time.sleep(0.3)
         return None

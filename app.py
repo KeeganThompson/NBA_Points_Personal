@@ -1,5 +1,7 @@
 import json
 import os
+import unicodedata
+from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response
 from scraper import BasketballReferenceScraper
 from predictor import Predictor
@@ -8,6 +10,11 @@ import pandas as pd
 app = Flask(__name__)
 scraper = BasketballReferenceScraper()
 proc = Predictor()
+# Strips accents, punctuation, and suffixes for exact comparisons
+def _normalize(name):
+    name = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
+    name = name.lower().replace('.', '').replace('-', ' ').replace("'", "")
+    return name.replace(' jr', '').replace(' sr', '').replace(' iii', '').replace(' ii', '').strip()
 
 @app.route('/')
 def index():
@@ -26,6 +33,7 @@ def get_teams():
 def stream_predict(team_abbr):
     def generate():
         try:
+            # vegas props cache
             vegas_lines = {}
             if os.path.exists('vegas_props.json'):
                 try:
@@ -65,7 +73,7 @@ def stream_predict(team_abbr):
             yield f"data: {json.dumps({'status': 'info', 'message': 'Pre-fetching metadata...'})}\n\n"
             team_meta_map = scraper.get_player_metadata(team_abbr)
 
-            yield f"data: {json.dumps({'status': 'info', 'message': 'Mining active roster...'})}\n\n"
+            yield f"data: {json.dumps({'status': 'info', 'message': 'Mining active roster and calculating Vacated Usage...'})}\n\n"
             projected_data = scraper.get_projected_lineup(team_abbr)
             
             if isinstance(projected_data, tuple) and len(projected_data) == 3:
@@ -80,10 +88,19 @@ def stream_predict(team_abbr):
                 yield f"data: {json.dumps({'status': 'complete', 'message': 'Process stopped.'})}\n\n"
                 return
 
-            yield f"data: {json.dumps({'status': 'info', 'message': f'Executing Mega-Query for {len(active_rotation)} players...'})}\n\n"
-            all_player_data = scraper.get_bulk_player_gamelogs(active_rotation)
+            yield f"data: {json.dumps({'status': 'info', 'message': f'Executing Mega-Query for {len(active_rotation) + len(injured_out)} players...'})}\n\n"
+            all_player_data = scraper.get_bulk_player_gamelogs(active_rotation + injured_out)
 
-            final_player_list = list(all_player_data.keys())
+            total_vacated_pts = 0.0
+            for inj_player in injured_out:
+                if inj_player in all_player_data and not all_player_data[inj_player].empty:
+                    season_avg = all_player_data[inj_player]['PTS'].mean()
+                    if pd.notna(season_avg):
+                        total_vacated_pts += season_avg
+                        
+            yield f"data: {json.dumps({'status': 'info', 'message': f'Calculated {round(total_vacated_pts, 1)} Vacated Points.'})}\n\n"
+
+            final_player_list = [p for p in active_rotation if p in all_player_data]
             total_players = len(final_player_list)
             
             for i, player in enumerate(final_player_list):
@@ -97,7 +114,10 @@ def stream_predict(team_abbr):
                     position = metadata['pos']
                     is_starter = player in projected_starters
                     
-                    model_output = proc.predict_next_game(player_data, adv_stats, team_map, current_team_id, next_game, experience, position, dvp_ranks, is_starter)
+                    model_output = proc.predict_next_game(
+                        player_data, adv_stats, team_map, current_team_id, next_game, 
+                        experience, position, dvp_ranks, is_starter, vacated_pts=total_vacated_pts
+                    )
                     
                     recent_games = player_data.tail(10)
                     history = []
@@ -116,14 +136,9 @@ def stream_predict(team_abbr):
                     
                     avg_10 = sum(h['pts'] for h in history) / len(history) if history else 0
                     
+                    # vegas line matching
                     v_line = vegas_lines.get(player, None)
                     if v_line is None:
-                        import unicodedata
-                        def _normalize(name):
-                            name = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
-                            name = name.lower().replace('.', '').replace('-', ' ').replace("'", "")
-                            return name.replace(' jr', '').replace(' sr', '').replace(' iii', '').replace(' ii', '').strip()
-                            
                         clean_player = _normalize(player)
                         p_parts = clean_player.split()
                         
@@ -148,7 +163,7 @@ def stream_predict(team_abbr):
                         "floor": round(model_output["floor"], 1),
                         "ceiling": round(model_output["ceiling"], 1),
                         "avg_10": round(avg_10, 1),
-                        "vegas_line": v_line,
+                        "vegas_line": v_line,  
                         "history": history
                     }
                     
@@ -164,6 +179,35 @@ def stream_predict(team_abbr):
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
     return Response(generate(), mimetype='text/event-stream')
+
+# auto-saver endpoint
+@app.route('/api/save_csv', methods=['POST'])
+def save_csv():
+    try:
+        data = request.json
+        team_name = data.get('team', 'Unknown_Team')
+        predictions = data.get('predictions', [])
+        
+        if not predictions:
+            return jsonify({"success": False, "error": "No predictions to save."})
+            
+        now = datetime.now()
+        folder_date = f"{now.month}-{now.day}-{now.year}"
+        file_date = now.strftime('%Y-%m-%d')
+        
+        # Testing_Predictions/M-D-YYYY/
+        save_dir = os.path.join("Testing_Predictions", folder_date)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        filename = f"{team_name}_Predictions_{file_date}.csv"
+        filepath = os.path.join(save_dir, filename)
+        
+        df = pd.DataFrame(predictions)
+        df.to_csv(filepath, index=False)
+        
+        return jsonify({"success": True, "path": filepath})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

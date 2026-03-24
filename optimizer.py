@@ -7,13 +7,10 @@ class LineupOptimizer:
         self.csv_file = csv_file
         self.df = pd.read_csv(csv_file)
         self.prepare_data()
-
+    # Generates a realistic DraftKings salary. 
+    # Usually, DFS prices players at roughly $300 per projected fantasy point, 
+    # plus a baseline floor for active players.
     def mock_draftkings_salary(self, avg_pts):
-        """
-        Generates a realistic DraftKings salary. 
-        Usually, DFS prices players at roughly $300 per projected fantasy point, 
-        plus a baseline floor for active players.
-        """
         if pd.isna(avg_pts) or avg_pts <= 0:
             return 3000
         

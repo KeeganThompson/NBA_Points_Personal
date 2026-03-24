@@ -3,12 +3,9 @@ import glob
 import pandas as pd
 import numpy as np
 from nba_api.stats.endpoints import leaguegamelog
-
+# Evaluates CSV predictions against actual NBA box scores for a specific date. 
+# game_date_str format: 'MM/DD/YYYY' (e.g., '03/19/2026')
 def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
-    """
-    Evaluates CSV predictions against actual NBA box scores for a specific date.
-    game_date_str format: 'MM/DD/YYYY' (e.g., '03/19/2026')
-    """
     print(f"Fetching actual box scores from NBA API for {game_date_str}...")
     try:
         log = leaguegamelog.LeagueGameLog(
@@ -78,10 +75,10 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
     print("-" * 55)
     if model_mae < baseline_mae:
         improvement = baseline_mae - model_mae
-        print(f" ✅ SUCCESS: Model BEAT the 10-game baseline by {improvement:.2f} points/player!")
+        print(f"SUCCESS: Model BEAT the 10-game baseline by {improvement:.2f} points/player!")
     else:
         loss = model_mae - baseline_mae
-        print(f" ❌ CAUTION: Model lost to the 10-game baseline by {loss:.2f} points/player.")
+        print(f"CAUTION: Model lost to the 10-game baseline by {loss:.2f} points/player.")
         
     print("-" * 55)
     print(f"Hit Rates:")
@@ -95,7 +92,7 @@ def evaluate_predictions(predictions_folder, game_date_str, season='2025-26'):
         print(f" - {row['Player']}: Predicted {row['Predicted_PTS']}, Actual {row['Actual_PTS']} (Off by {row['Model_Error']:.1f})")
 
 if __name__ == '__main__':
-    target_folder = r"Testing_Predictions/3_20_2026"
-    target_date = "03/20/2026" 
+    target_folder = r"Testing_Predictions/3_21_2026"
+    target_date = "03/21/2026" 
     
     evaluate_predictions(target_folder, target_date)
