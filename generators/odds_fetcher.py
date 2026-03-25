@@ -1,8 +1,12 @@
 import requests
 import json
 import os
+import sys
 import argparse
 from datetime import datetime
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(BASE_DIR)
 
 API_KEY = '56280a5d9570359d7171919e38f88fbf'
 SPORT = 'basketball_nba'
@@ -21,50 +25,50 @@ TEAM_MAPPING = {
 
 def fetch_vegas_lines(target_teams=None):
     print("Connecting to The Odds API...")
-    
-    events_url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/events"
-    events_res = requests.get(events_url, params={'apiKey': API_KEY})
+    if target_teams:
+        print(f"Targeting specific games for: {', '.join(target_teams)}")
+
+    # Get active events
+    events_res = requests.get(
+        f"https://api.the-odds-api.com/v4/sports/{SPORT}/events",
+        params={'apiKey': API_KEY}
+    )
     
     if events_res.status_code != 200:
         print(f"Failed to fetch events: {events_res.text}")
         return
 
     events = events_res.json()
-    
-    target_mascots = []
-    if target_teams:
-        target_mascots = [TEAM_MAPPING.get(t, t).lower() for t in target_teams]
-        print(f"Targeting specific games for: {', '.join(target_teams)}")
-    else:
-        print(f"Found {len(events)} upcoming events. Fetching all player props...")
-        
     vegas_data = {}
-    requests_used = 1
+    api_calls = 1
 
     for event in events:
-        # If targeting specific teams, skip other games
-        if target_mascots:
-            event_name = f"{event.get('home_team', '')} {event.get('away_team', '')}".lower()
-            if not any(mascot in event_name for mascot in target_mascots):
+        home_team = event.get('home_team', '')
+        away_team = event.get('away_team', '')
+        
+        home_abbr = next((abbr for abbr, name in TEAM_MAPPING.items() if name in home_team), None)
+        away_abbr = next((abbr for abbr, name in TEAM_MAPPING.items() if name in away_team), None)
+
+        if target_teams:
+            if home_abbr not in target_teams and away_abbr not in target_teams:
                 continue
-                
-        event_id = event['id']
-        
-        odds_url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/events/{event_id}/odds"
-        odds_res = requests.get(odds_url, params={
-            'apiKey': API_KEY,
-            'regions': REGIONS,
-            'markets': MARKETS
-        })
-        
-        requests_used += 1
+
+        odds_res = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{SPORT}/events/{event['id']}/odds",
+            params={
+                'apiKey': API_KEY,
+                'regions': REGIONS,
+                'markets': MARKETS
+            }
+        )
+        api_calls += 1
         
         if odds_res.status_code != 200:
             continue
             
-        odds_json = odds_res.json()
+        odds_data = odds_res.json()
         
-        for bookmaker in odds_json.get('bookmakers', []):
+        for bookmaker in odds_data.get('bookmakers', []):
             for market in bookmaker.get('markets', []):
                 if market['key'] == 'player_points':
                     for outcome in market.get('outcomes', []):
@@ -82,7 +86,7 @@ def fetch_vegas_lines(target_teams=None):
         final_lines[player] = consensus_line
 
     today_str = datetime.now().strftime('%Y-%m-%d')
-    archive_dir = 'Sportsbooks_Lines'
+    archive_dir = os.path.join(BASE_DIR, 'Sportsbooks_Lines')
     os.makedirs(archive_dir, exist_ok=True)
     archive_file = os.path.join(archive_dir, f'vegas_props_{today_str}.json')
 
@@ -102,7 +106,8 @@ def fetch_vegas_lines(target_teams=None):
         "lines": existing_lines
     }
 
-    with open('vegas_props.json', 'w') as f:
+    root_vegas_file = os.path.join(BASE_DIR, 'vegas_props.json')
+    with open(root_vegas_file, 'w') as f:
         json.dump(output_data, f, indent=4)
         
     with open(archive_file, 'w') as f:
@@ -110,12 +115,12 @@ def fetch_vegas_lines(target_teams=None):
 
     print(f"Successfully saved props for {len(final_lines)} targeted players!")
     print(f"Database now holds {len(existing_lines)} total lines for today.")
-    print(f"API Requests Used This Run: {requests_used}")
+    print(f"API Requests Used This Run: {api_calls}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--teams', type=str, help='Comma separated list of team abbreviations (e.g. MIA,LAL)')
+    parser = argparse.ArgumentParser(description="Fetch Player Prop Lines from The Odds API")
+    parser.add_argument('--teams', type=str, help='Comma separated list of team abbreviations to specifically target')
     args = parser.parse_args()
     
-    teams_list = args.teams.split(',') if args.teams else None
-    fetch_vegas_lines(teams_list)
+    target_teams = args.teams.split(',') if args.teams else None
+    fetch_vegas_lines(target_teams)

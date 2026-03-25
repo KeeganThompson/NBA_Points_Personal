@@ -1,12 +1,17 @@
 import pandas as pd
 import json
 import os
+import sys
 import argparse
 import unicodedata
 from datetime import datetime
-from scraper import BasketballReferenceScraper
-from predictor import Predictor
-from bet_analyzer import BetAnalyzer
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(BASE_DIR)
+
+from core.scraper import BasketballReferenceScraper
+from core.predictor import Predictor
+from evaluators.bet_analyzer import BetAnalyzer
 
 def normalize_name(name):
     name = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
@@ -15,7 +20,7 @@ def normalize_name(name):
 
 def run_mega_slate(target_teams=None):
     print("=======================================================")
-    print(" INITIALIZING NBA MICRO-SLATE GENERATOR")
+    print("  INITIALIZING NBA MICRO-SLATE GENERATOR")
     print("=======================================================\n")
     
     scraper = BasketballReferenceScraper()
@@ -24,10 +29,11 @@ def run_mega_slate(target_teams=None):
     
     today_str = datetime.now().strftime('%Y-%m-%d')
     
+    vegas_file = os.path.join(BASE_DIR, 'vegas_props.json')
     vegas_lines = {}
-    if os.path.exists('vegas_props.json'):
+    if os.path.exists(vegas_file):
         try:
-            with open('vegas_props.json', 'r') as f:
+            with open(vegas_file, 'r') as f:
                 cache = json.load(f)
                 vegas_lines = cache.get('lines', {})
         except: pass
@@ -45,15 +51,14 @@ def run_mega_slate(target_teams=None):
         if next_game and next_game['Date'] == today_str:
             teams_playing_today.append((abbr, next_game))
             
-    # If predictor passed some teams, ignore the rest
     if target_teams:
         teams_playing_today = [t for t in teams_playing_today if t[0] in target_teams]
             
     if not teams_playing_today:
-        print("No target games scheduled. Exiting.")
+        print(" No target games scheduled. Exiting.")
         return
         
-    print(f"Fetching league stats for {len(teams_playing_today)} targeted teams...")
+    print(f" Fetching league stats for {len(teams_playing_today)} targeted teams...")
     
     adv_stats = scraper.scrape_advanced_team_stats()
     dvp_ranks = scraper.get_dvp_matrix()
@@ -61,7 +66,7 @@ def run_mega_slate(target_teams=None):
     master_results = []
     
     for team_abbr, next_game in teams_playing_today:
-        print(f"\nProcessing Team: {team_abbr} (vs {next_game['Opp']})")
+        print(f"\n Processing Team: {team_abbr}")
         current_team_id = scraper.get_team_id(team_abbr)
         
         team_meta_map = scraper.get_player_metadata(team_abbr)
@@ -88,16 +93,15 @@ def run_mega_slate(target_teams=None):
                     
         final_player_list = [p for p in active_rotation if p in all_player_data]
         
-        print(f"  Training AI Ensemble for {len(final_player_list)} players...")
-        
         for player in final_player_list:
             try:
                 player_data = all_player_data[player]
                 metadata = team_meta_map.get(player, {'exp': 5, 'pos': 'F'})
+                is_starter = player in projected_starters
                 
                 model_output = proc.predict_next_game(
                     player_data, adv_stats, team_map, current_team_id, next_game, 
-                    metadata['exp'], metadata['pos'], dvp_ranks, player in projected_starters, 
+                    metadata['exp'], metadata['pos'], dvp_ranks, is_starter, 
                     vacated_pts=total_vacated_pts
                 )
                 
@@ -113,26 +117,29 @@ def run_mega_slate(target_teams=None):
                     "Ceiling": round(model_output["ceiling"], 1),
                     "10_Game_Avg": round(recent_10, 1)
                 })
-            except Exception: pass 
+            except Exception as e: 
+                pass 
 
-    # Add to the daily master CSV
     df = pd.DataFrame(master_results)
-    
-    archive_dir = "Mega_Slate_Predictions"
+    if df.empty:
+        print(" No valid predictions could be generated.")
+        return
+
+    archive_dir = os.path.join(BASE_DIR, "Mega_Slate_Predictions")
     os.makedirs(archive_dir, exist_ok=True)
     csv_filename = os.path.join(archive_dir, f"Master_Slate_{today_str}.csv")
     
     if os.path.exists(csv_filename):
-        existing_df = pd.read_csv(csv_filename)
-        # Drop players we just predicted so we can overwrite them with the fresh ones
-        existing_df = existing_df[~existing_df['Player'].isin(df['Player'])]
-        df = pd.concat([existing_df, df], ignore_index=True)
-        
+        try:
+            existing_df = pd.read_csv(csv_filename)
+            if not existing_df.empty and 'Player' in existing_df.columns:
+                existing_df = existing_df[~existing_df['Player'].isin(df['Player'])]
+                df = pd.concat([existing_df, df], ignore_index=True)
+        except Exception: pass
+            
     df.to_csv(csv_filename, index=False)
-    print(f"\n Micro-Slate appended. Database now holds {len(df)} total players.")
     
-    # Auto-Scan for Bets for the players just ran
-    print("\nScanning Micro-Slate for Vegas Edges...")
+    print("\n Scanning Micro-Slate for Vegas Edges...")
     new_bets = []
     for _, row in pd.DataFrame(master_results).iterrows():
         player = row['Player']
@@ -143,7 +150,6 @@ def run_mega_slate(target_teams=None):
         v_line = vegas_lines.get(player)
         if v_line is None:
             clean_player = normalize_name(player)
-            p_parts = clean_player.split()
             for v_name, line in vegas_lines.items():
                 if normalize_name(v_name) == clean_player:
                     v_line = line
@@ -156,7 +162,7 @@ def run_mega_slate(target_teams=None):
             
             if stars >= 3:
                 color_edge = f"+{edge:.1f}" if edge > 0 else f"{edge:.1f}"
-                print(f"{player:<22} | {v_line:<5.1f} | {pred:<7.1f} | {color_edge:<5} | {pick:<5} | {reason}")
+                print(f"{player:<22} | {v_line:<5.1f} | {pred:<7.1f} | {color_edge:<5} | {stars}-Star {pick:<5} | {reason}")
                 new_bets.append({
                     "Date": today_str,
                     "Player": player,
@@ -173,13 +179,17 @@ def run_mega_slate(target_teams=None):
 
     if new_bets:
         tracker_df = pd.DataFrame(new_bets)
-        tracker_file = 'bet_tracker.csv'
+        tracker_file = os.path.join(BASE_DIR, 'bet_tracker.csv')
         if os.path.exists(tracker_file):
-            existing_df = pd.read_csv(tracker_file)
-            existing_df = existing_df[~((existing_df['Date'] == today_str) & (existing_df['Player'].isin([b['Player'] for b in new_bets])))]
-            tracker_df = pd.concat([existing_df, tracker_df], ignore_index=True)
+            try:
+                existing_df = pd.read_csv(tracker_file)
+                existing_df = existing_df[~((existing_df['Date'] == today_str) & (existing_df['Player'].isin([b['Player'] for b in new_bets])))]
+                tracker_df = pd.concat([existing_df, tracker_df], ignore_index=True)
+            except Exception: pass
         tracker_df.to_csv(tracker_file, index=False)
-        print(f"📝 Logged {len(new_bets)} premium bets to tracker.")
+        print(f" Logged {len(new_bets)} premium bets to tracker.")
+    else:
+        print(" No actionable edges found for targeted teams.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

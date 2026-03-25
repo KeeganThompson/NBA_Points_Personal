@@ -150,7 +150,6 @@ class Predictor:
     def predict_next_game(self, player_df, adv_stats, team_map, current_team_id, next_game_data, experience, position, dvp_ranks, is_starter, vacated_pts=0.0):
         engineered_df = self.prepare_data(player_df, adv_stats, team_map, current_team_id, experience, position, dvp_ranks)
         
-        # low sample size short circuit
         if engineered_df.empty or len(engineered_df) < 5:
             safe_avg = player_df['PTS'].mean() if not player_df.empty else 0.0
             if pd.isna(safe_avg): safe_avg = 0.0

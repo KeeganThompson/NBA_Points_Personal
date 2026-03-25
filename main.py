@@ -1,6 +1,6 @@
 import time
-from scraper import BasketballReferenceScraper
-from predictor import Predictor
+from core.scraper import BasketballReferenceScraper
+from core.predictor import Predictor
 
 if __name__ == "__main__":
     scraper = BasketballReferenceScraper()

@@ -11,7 +11,7 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-class FadeEvaluator:
+class MegaEvaluator:
     def __init__(self):
         self.archive_dir = 'Sportsbooks_Lines'
         self.slate_dir = 'Mega_Slate_Predictions'
@@ -58,7 +58,7 @@ class FadeEvaluator:
             filename = os.path.basename(csv_filepath)
             date_str = filename.replace('Master_Slate_', '').replace('.csv', '')
             target_date = datetime.strptime(date_str, '%Y-%m-%d')
-        except Exception:
+        except Exception as e:
             return pd.DataFrame()
 
         vegas_file = os.path.join(self.archive_dir, f'vegas_props_{date_str}.json')
@@ -96,6 +96,7 @@ class FadeEvaluator:
         
         merged['MIN_FLOAT'] = merged['MIN'].apply(self.convert_minutes)
         merged = merged[merged['MIN_FLOAT'] >= 5.0].copy()
+        merged['Date'] = date_str
         
         return merged
 
@@ -104,18 +105,23 @@ class FadeEvaluator:
             print(f" No valid actionable data found for {title}.")
             return
 
-        # FADE
+        merged['AI_Error'] = abs(merged['Predicted_PTS'] - merged['Actual_PTS'])
+        merged['Vegas_Error'] = abs(merged['Vegas_Line'] - merged['Actual_PTS'])
+        
+        ai_mae = merged['AI_Error'].mean()
+        vegas_mae = merged['Vegas_Error'].mean()
+
         merged['AI_Edge'] = merged['Predicted_PTS'] - merged['Vegas_Line']
         merged['Bet_Signal'] = 'NO BET'
         
-        merged.loc[merged['AI_Edge'] >= 2.5, 'Bet_Signal'] = 'UNDER (Fade AI Over)'
-        merged.loc[merged['AI_Edge'] <= -2.5, 'Bet_Signal'] = 'OVER (Fade AI Under)'
+        merged.loc[merged['AI_Edge'] >= 2.5, 'Bet_Signal'] = 'OVER'
+        merged.loc[merged['AI_Edge'] <= -2.5, 'Bet_Signal'] = 'UNDER'
         
         bets = merged[merged['Bet_Signal'] != 'NO BET'].copy()
         bets['Result'] = 'LOSS'
         
-        bets.loc[(bets['Bet_Signal'] == 'UNDER (Fade AI Over)') & (bets['Actual_PTS'] < bets['Vegas_Line']), 'Result'] = 'WIN'
-        bets.loc[(bets['Bet_Signal'] == 'OVER (Fade AI Under)') & (bets['Actual_PTS'] > bets['Vegas_Line']), 'Result'] = 'WIN'
+        bets.loc[(bets['Bet_Signal'] == 'OVER') & (bets['Actual_PTS'] > bets['Vegas_Line']), 'Result'] = 'WIN'
+        bets.loc[(bets['Bet_Signal'] == 'UNDER') & (bets['Actual_PTS'] < bets['Vegas_Line']), 'Result'] = 'WIN'
         bets.loc[bets['Actual_PTS'] == bets['Vegas_Line'], 'Result'] = 'PUSH'
         
         total_bets = len(bets)
@@ -128,16 +134,25 @@ class FadeEvaluator:
         profit = (wins * 90.90) - (losses * 100)
 
         print("\n=======================================================")
-        print(f"  FADE STRATEGY PERFORMANCE REPORT: {title}")
+        print(f"  MEGA-SLATE PERFORMANCE REPORT: {title}")
         print("=======================================================")
         print(f"Total Players Evaluated Against DraftKings: {len(merged)}")
         print("-------------------------------------------------------")
-        print("  THE FADE HYPOTHESIS (-110 Odds)")
-        print(" Strategy: When AI disagrees with Vegas by 2.5+ points, bet the OPPOSITE.")
+        print(f"AI Ensemble MAE:              {ai_mae:.2f} PTS")
+        print(f"Vegas (DraftKings) MAE:       {vegas_mae:.2f} PTS")
+        
+        if ai_mae < vegas_mae:
+            print(f" AI beat Vegas mathematically by {(vegas_mae - ai_mae):.2f} points per player!")
+        else:
+            print(f" Vegas beat the AI by {(ai_mae - vegas_mae):.2f} points.")
+            
+        print("-------------------------------------------------------")
+        print("  HYPOTHETICAL BETTING SIMULATION (-110 Odds)")
+        print(" Strategy: Bet WITH the AI when it disagrees with Vegas by 2.5+ pts")
         print("-------------------------------------------------------")
         print(f"Total Bets Placed:  {total_bets} ({pushes} Pushes)")
         print(f"Record:             {wins}W - {losses}L")
-        print(f"Fade Win Rate:      {win_rate:.1f}%  (Break-even is 52.38%)")
+        print(f"Win Rate:           {win_rate:.1f}%  (Break-even is 52.38%)")
         print(f"Net Profit:         ${profit:.2f}")
         print("=======================================================\n")
 
@@ -145,7 +160,7 @@ class FadeEvaluator:
         date_str = os.path.basename(csv_filepath).replace('Master_Slate_', '').replace('.csv', '')
         target_date = datetime.strptime(date_str, '%Y-%m-%d')
         season_str = self.get_season_string(target_date)
-        
+    
         print(f" Fetching actual NBA box scores for {date_str}...")
         log_df = self.fetch_actuals(season_str, target_date.strftime('%m/%d/%Y'))
         
@@ -154,12 +169,12 @@ class FadeEvaluator:
 
     def evaluate_all(self):
         print(f"=======================================================")
-        print(f"  INITIALIZING MASS HISTORICAL FADE EVALUATION")
+        print(f"  INITIALIZING MASS HISTORICAL EVALUATION")
         print(f"=======================================================")
         
         csv_files = glob.glob(os.path.join(self.slate_dir, 'Master_Slate_*.csv'))
         if not csv_files:
-            print(" No Master Slates found in Mega_Slate_Predictions folder.")
+            print("No Master Slates found in Mega_Slate_Predictions folder.")
             return
             
         print(f" Found {len(csv_files)} historical slates. Fetching ENTIRE SEASON box scores...")
@@ -175,28 +190,28 @@ class FadeEvaluator:
             merged = self.process_single_date(file, full_log)
             if not merged.empty:
                 all_merged_dfs.append(merged)
-                print(f"   Processed {date_str} ({len(merged)} players)")
+                print(f"  Processed {date_str} ({len(merged)} players)")
             else:
-                print(f"   Skipped {date_str}")
+                print(f"  Skipped {date_str} (Missing Vegas Lines or Box Scores)")
 
         if not all_merged_dfs:
-            print(" Could not map any historical slates to Vegas lines.")
+            print("Could not map any historical slates to Vegas lines.")
             return
             
         master_merged = pd.concat(all_merged_dfs, ignore_index=True)
-        self.print_dashboard(master_merged, "ALL HISTORICAL DATA (AGGREGATE FADE)")
+        self.print_dashboard(master_merged, "ALL HISTORICAL DATA (AGGREGATE)")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate a Mega-Slate by Fading the AI against DraftKings lines.")
+    parser = argparse.ArgumentParser(description="Evaluate a Mega-Slate CSV against actual NBA box scores and Vegas lines.")
     parser.add_argument('--file', type=str, help="Path to a specific Master_Slate CSV file.")
-    parser.add_argument('--gradeall', action='store_true', help="Grade ALL historical slates using Fade Logic.")
+    parser.add_argument('--gradeall', action='store_true', help="Grade ALL historical slates in the directory.")
     args = parser.parse_args()
     
-    evaluator = FadeEvaluator()
+    evaluator = MegaEvaluator()
     if args.gradeall:
         evaluator.evaluate_all()
     elif args.file:
         evaluator.evaluate_file(args.file)
     else:
-        print(" Error: You must specify either --file <path> or --gradeall")
+        print("Error: You must specify either --file <path> or --gradeall")
