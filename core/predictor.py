@@ -245,6 +245,9 @@ class Predictor:
         if pd.isna(safe_l10_per_100) or safe_l10_per_100 == 0: 
             safe_l10_per_100 = (current_season_avg / (current_l5_min + 0.1)) * 100.0 * (48.0 / 100.0)
             
+        if current_l5_usg >= 0.28 and current_season_avg >= 20.0:
+            safe_l10_per_100 = max(safe_l10_per_100, current_l3_pts_per_100)
+            
         dynamic_base = expected_possessions * (safe_l10_per_100 / 100.0)
         
         games_in_7 = next_game_data.get('Games_In_7_Days', 2.0)
@@ -303,9 +306,10 @@ class Predictor:
         
         best_lgb_params = study.best_params
         best_lgb_params.update({
-            'objective': 'huber', 'random_state': 42, 'n_estimators': 60, 'verbose': -1, 
+            'objective': 'huber', 'random_state': 42,  'n_estimators': 60, 'verbose': -1, 
             'min_child_samples': min(4, max(1, len(X) // 3))
         })
+        
         
         lgb_model = lgb.LGBMRegressor(**best_lgb_params)
         lgb_model.fit(X_df, y, sample_weight=weights)
@@ -381,10 +385,14 @@ class Predictor:
         ceiling = raw_ceil * multiplier
         
         safe_pts_base = current_l10_pts if pd.notna(current_l10_pts) and current_l10_pts > 0 else current_season_avg
-        volatility_bonus = current_min_std * 0.4
+        volatility_bonus = current_min_std * 0.5
         
-        max_cap = (safe_pts_base * 1.25) + 3.0 + volatility_bonus
-        min_cap = max(0.0, (safe_pts_base * 0.75) - 2.0)
+        if current_season_avg >= 22.0:
+            max_cap = (safe_pts_base * 1.45) + 5.0 + volatility_bonus
+        else:
+            max_cap = (safe_pts_base * 1.35) + 4.0 + volatility_bonus
+            
+        min_cap = max(0.0, (safe_pts_base * 0.60) - 4.0)
         
         prediction = np.clip(prediction, min_cap, max_cap)
         floor = np.clip(floor, min_cap, prediction - 0.5) 

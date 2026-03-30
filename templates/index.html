@@ -10,6 +10,7 @@
             --bg-color: #0f172a; --panel-bg: #1e293b; --text-color: #f8fafc;
             --accent: #3b82f6; --accent-hover: #2563eb;
             --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+            --synergy: #a855f7;
             --border: #334155;
         }
         body {
@@ -33,7 +34,6 @@
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
-        /* Dashboard Styles */
         .dash-grid { display: grid; grid-template-columns: 1fr 2.5fr; gap: 20px; }
         .panel { background: var(--panel-bg); padding: 20px; border-radius: 10px; border: 1px solid var(--border); }
         .timer-display { font-size: 3rem; font-weight: bold; color: var(--accent); text-align: center; margin: 20px 0; }
@@ -41,7 +41,6 @@
         .pulse { animation: pulse 2s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
         
-        /* Game Accordions */
         .game-accordion {
             background: #0f172a; border: 1px solid var(--border);
             border-radius: 8px; margin-bottom: 15px; overflow: hidden;
@@ -61,18 +60,16 @@
         }
         .game-content { padding: 20px; background: var(--panel-bg); }
         
-        /* Bet Cards */
         .bet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 15px; }
         .bet-card { background: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid var(--border); border-left: 4px solid var(--accent); }
         .bet-card.stars-5 { border-left-color: var(--warning); }
-        .bet-card.stars-4 { border-left-color: #a855f7; }
+        .bet-card.stars-4 { border-left-color: var(--synergy); }
         .bet-card h3 { margin: 0 0 10px 0; font-size: 18px; }
         .stars { color: var(--warning); font-size: 18px; letter-spacing: 2px; margin-bottom: 10px;}
-        .bet-stat { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 14px; }
+        .bet-stat { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 14px; align-items: center;}
         .pick-over { color: var(--success); font-weight: bold; }
         .pick-under { color: var(--danger); font-weight: bold; }
         
-        /* Evaluator & Tables */
         .eval-btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
         .eval-btn { background: var(--border); color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         .eval-btn:hover { background: var(--accent); }
@@ -83,7 +80,6 @@
         th { padding: 10px; border-bottom: 2px solid var(--border); }
         td { padding: 10px; border-bottom: 1px solid var(--border); }
 
-        /* Chart Modal Styles */
         .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.8); backdrop-filter: blur(5px); }
         .modal-content { background-color: var(--panel-bg); margin: 5% auto; padding: 25px; border: 1px solid var(--border); width: 80%; max-width: 900px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
         .close-btn { color: #94a3b8; font-size: 28px; font-weight: bold; cursor: pointer; transition: 0.2s; line-height: 1; }
@@ -96,7 +92,7 @@
 <div class="navbar">
     <button class="nav-btn active" onclick="switchTab('dashboard')">Live Dashboard</button>
     <button class="nav-btn" onclick="switchTab('generator')">Team Projections</button>
-    <button class="nav-btn" onclick="switchTab('evaluators')">Evaluator Terminal</button>
+    <button class="nav-btn" onclick="switchTab('evaluators')">System Backtesting</button>
 </div>
 
 <div id="chartModal" class="modal">
@@ -110,11 +106,24 @@
                     <span id="h2h-note" style="display:none; font-size: 12px; color: var(--warning);">*Current season games only</span>
                 </div>
             </div>
-            <span class="close-btn" onclick="closeModal()">&times;</span>
+            <span class="close-btn" onclick="closeModal('chartModal')">&times;</span>
         </div>
         <div class="chart-container">
             <canvas id="playerChart"></canvas>
         </div>
+    </div>
+</div>
+
+<div id="synergyModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+                <h2 id="synergyTitle" style="margin: 0 0 5px 0; color: var(--synergy);">Teammate Assist Correlations</h2>
+                <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">If <span id="synPlayer" style="font-weight:bold; color:white;"></span> is projected to score highly (OVER), target teammates with strong positive assist correlations. If they are projected UNDER, fade the positive correlations or target negative ones.</p>
+            </div>
+            <span class="close-btn" onclick="closeModal('synergyModal')">&times;</span>
+        </div>
+        <div id="synergy-content">Loading...</div>
     </div>
 </div>
 
@@ -160,7 +169,7 @@
                         <th>10-Game Avg</th>
                         <th>Vegas Line</th>
                         <th>Edge</th>
-                        <th>Trend</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="gen-table-body"></tbody>
@@ -185,7 +194,6 @@
 </div>
 
 <script>
-    // --- Navigation ---
     function switchTab(tabId) {
         document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
         document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
@@ -193,21 +201,18 @@
         event.target.classList.add('active');
     }
 
-    // --- Interactive Chart Logic ---
     let chartInstance = null;
     let activePlayerObj = null;
 
     function openChartModal(playerName) {
         activePlayerObj = currentPlayers.find(x => x.name === playerName);
         if (!activePlayerObj) return;
-        
         document.getElementById('chartModal').style.display = 'block';
-        switchChartMode('L10'); // Default to L10
+        switchChartMode('L10');
     }
 
     function switchChartMode(mode) {
         if (!activePlayerObj) return;
-        
         document.getElementById('btn-l10').style.background = mode === 'L10' ? 'var(--accent)' : 'var(--border)';
         document.getElementById('btn-h2h').style.background = mode === 'H2H' ? 'var(--accent)' : 'var(--border)';
         document.getElementById('h2h-note').style.display = mode === 'H2H' ? 'inline-block' : 'none';
@@ -216,117 +221,97 @@
         const ctx = document.getElementById('playerChart').getContext('2d');
         if (chartInstance) chartInstance.destroy();
         
-        let labels = [];
-        let histData = [];
-        let titleSuffix = '';
+        let labels = [], histData = [], titleSuffix = '';
 
         if (mode === 'L10') {
-            titleSuffix = "Last 10 Games";
-            labels = [...p.recent_10_opps];
-            histData = [...p.recent_10_pts];
+            titleSuffix = "Last 10 Games"; labels = [...p.recent_10_opps]; histData = [...p.recent_10_pts];
         } else {
             titleSuffix = `Last 5 vs ${p.target_opp}`;
             if (p.h2h_pts.length === 0) {
                 document.getElementById('chartTitle').innerText = `${p.name} - No Matchups vs ${p.target_opp} this season`;
-                chartInstance = new Chart(ctx, { type: 'bar', data: { labels: [], datasets: [] } });
-                return;
+                chartInstance = new Chart(ctx, { type: 'bar', data: { labels: [], datasets: [] } }); return;
             }
-            labels = [...p.h2h_dates];
-            histData = [...p.h2h_pts];
+            labels = [...p.h2h_dates]; histData = [...p.h2h_pts];
         }
 
         document.getElementById('chartTitle').innerText = `${p.name} - ${titleSuffix}`;
+        labels.push(`AI Pred`); histData.push(null); 
         
-        // Add the AI Projection block at the end
-        labels.push(`AI Pred`);
-        histData.push(null); 
-        
-        const predData = Array(histData.length - 1).fill(null);
-        predData.push(p.prediction);
-        
+        const predData = Array(histData.length - 1).fill(null); predData.push(p.prediction);
         const avgData = Array(labels.length).fill(p.avg_10);
         
         const datasets = [
-            {
-                label: 'Historical Points',
-                data: histData,
-                backgroundColor: '#3b82f6', // Blue
-                borderRadius: 4
-            },
-            {
-                label: 'AI Projection',
-                data: predData,
-                backgroundColor: '#a855f7', // Purple
-                borderRadius: 4
-            },
-            {
-                label: '10-Game Moving Avg',
-                data: avgData,
-                borderColor: '#94a3b8',
-                borderDash: [5, 5],
-                type: 'line',
-                pointRadius: 0,
-                fill: false,
-                borderWidth: 2
-            }
+            { label: 'Historical Points', data: histData, backgroundColor: '#3b82f6', borderRadius: 4 },
+            { label: 'AI Projection', data: predData, backgroundColor: '#a855f7', borderRadius: 4 },
+            { label: '10-Game Moving Avg', data: avgData, borderColor: '#94a3b8', borderDash: [5, 5], type: 'line', pointRadius: 0, fill: false, borderWidth: 2 }
         ];
         
         if (p.vegas_line !== null && p.vegas_line !== 'N/A') {
-            const vegasData = Array(labels.length).fill(p.vegas_line);
-            datasets.push({
-                label: `Vegas Line (${p.vegas_line})`,
-                data: vegasData,
-                borderColor: '#f59e0b', // Orange
-                type: 'line',
-                pointRadius: 0,
-                fill: false,
-                borderWidth: 2
-            });
+            datasets.push({ label: `Vegas Line (${p.vegas_line})`, data: Array(labels.length).fill(p.vegas_line), borderColor: '#f59e0b', type: 'line', pointRadius: 0, fill: false, borderWidth: 2 });
         }
         
         chartInstance = new Chart(ctx, {
-            type: 'bar',
-            data: { labels, datasets },
+            type: 'bar', data: { labels, datasets },
             options: {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true, maintainAspectRatio: false,
                 scales: {
-                    y: { 
-                        beginAtZero: true, 
-                        grid: { color: '#334155' },
-                        ticks: { color: '#94a3b8', font: { size: 14 } }
-                    },
-                    x: { 
-                        grid: { display: false },
-                        ticks: { color: '#cbd5e1', font: { size: 12, weight: 'bold' }, autoSkip: false, maxRotation: 45, minRotation: 45 }
-                    }
+                    y: { beginAtZero: true, grid: { color: '#334155' }, ticks: { color: '#94a3b8', font: { size: 14 } } },
+                    x: { grid: { display: false }, ticks: { color: '#cbd5e1', font: { size: 12, weight: 'bold' }, autoSkip: false, maxRotation: 45, minRotation: 45 } }
                 },
                 plugins: {
                     legend: { labels: { color: '#f8fafc', font: { size: 14 } } },
-                    tooltip: {
-                        backgroundColor: '#1e293b',
-                        titleFont: { size: 16 },
-                        bodyFont: { size: 14 },
-                        padding: 12,
-                        borderColor: '#334155',
-                        borderWidth: 1
-                    }
+                    tooltip: { backgroundColor: '#1e293b', titleFont: { size: 16 }, bodyFont: { size: 14 }, padding: 12, borderColor: '#334155', borderWidth: 1 }
                 }
             }
         });
     }
 
-    function closeModal() {
-        document.getElementById('chartModal').style.display = 'none';
-        activePlayerObj = null;
+    async function showSynergy(playerName, teamAbbr) {
+        document.getElementById('synergyModal').style.display = 'block';
+        document.getElementById('synPlayer').innerText = playerName;
+        document.getElementById('synergyTitle').innerText = `${playerName} - Assist Synergy`;
+        document.getElementById('synergy-content').innerHTML = '<p style="color: var(--accent);">Mining team game logs...</p>';
+
+        try {
+            const res = await fetch('/api/synergy', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({player: playerName, team: teamAbbr})
+            });
+            const data = await res.json();
+            
+            if(!data.success || data.correlations.length === 0) {
+                document.getElementById('synergy-content').innerHTML = '<p>No strong assist correlations found for this player.</p>';
+                return;
+            }
+
+            let html = '<table style="width:100%; border-collapse: collapse; text-align: left; background: #0f172a;">';
+            html += '<tr><th style="padding:10px; border-bottom:2px solid var(--border);">Teammate (Assists)</th><th style="padding:10px; border-bottom:2px solid var(--border);">Correlation</th><th style="padding:10px; border-bottom:2px solid var(--border);">Signal</th></tr>';
+            data.correlations.forEach(c => {
+                const color = c.advice === 'OVER' ? 'var(--success)' : 'var(--danger)';
+                html += `<tr>
+                    <td style="padding:10px; border-bottom:1px solid var(--border); font-weight:bold;">${c.teammate}</td>
+                    <td style="padding:10px; border-bottom:1px solid var(--border);">${c.correlation} <span style="font-size:0.85em; color:#94a3b8;">(${c.strength})</span></td>
+                    <td style="padding:10px; border-bottom:1px solid var(--border); color:${color}; font-weight:bold;">Lean ${c.advice}</td>
+                </tr>`;
+            });
+            html += '</table>';
+            document.getElementById('synergy-content').innerHTML = html;
+        } catch(e) {
+            document.getElementById('synergy-content').innerHTML = `<p style="color:var(--danger);">Error loading synergy: ${e}</p>`;
+        }
+    }
+
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+        if(modalId === 'chartModal') activePlayerObj = null;
     }
 
     window.onclick = function(event) {
-        const modal = document.getElementById('chartModal');
-        if (event.target == modal) closeModal();
+        if (event.target == document.getElementById('chartModal')) closeModal('chartModal');
+        if (event.target == document.getElementById('synergyModal')) closeModal('synergyModal');
     }
 
-    // --- Team Projections Logic ---
     let currentPlayers = [];
 
     async function loadTeams() {
@@ -335,9 +320,7 @@
             const data = await res.json();
             const sel = document.getElementById('team-select');
             sel.innerHTML = '<option value="">Select a Team...</option>';
-            data.teams.forEach(t => {
-                sel.innerHTML += `<option value="${t.abbreviation}">${t.full_name}</option>`;
-            });
+            data.teams.forEach(t => { sel.innerHTML += `<option value="${t.abbreviation}">${t.full_name}</option>`; });
         } catch(e) {}
     }
     loadTeams();
@@ -353,7 +336,6 @@
         const source = new EventSource(`/stream_predict/${team}`);
         source.onmessage = function(event) {
             const data = JSON.parse(event.data);
-            
             if (data.status === 'info' || data.status === 'progress' || data.status === 'matchup_info') {
                 status.innerText = data.message || `Analyzing matchup...`;
             } else if (data.status === 'player_done') {
@@ -362,14 +344,9 @@
             } else if (data.status === 'complete') {
                 status.innerText = "Generation Complete! Saved to Testing_Predictions.";
                 source.close();
-                fetch('/api/save_csv', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ team: team, predictions: currentPlayers })
-                });
+                fetch('/api/save_csv', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ team: team, predictions: currentPlayers }) });
             } else if (data.status === 'error') {
-                status.innerText = `Error: ${data.message}`;
-                source.close();
+                status.innerText = `Error: ${data.message}`; source.close();
             }
         };
     }
@@ -377,10 +354,11 @@
     function renderGeneratorTable() {
         currentPlayers.sort((a, b) => b.prediction - a.prediction);
         const tbody = document.getElementById('gen-table-body');
+        const activeTeam = document.getElementById('team-select').value;
+        
         tbody.innerHTML = currentPlayers.map(p => {
             const vLine = p.vegas_line !== null ? p.vegas_line : 'N/A';
-            let edge = '-';
-            let edgeColor = '';
+            let edge = '-'; let edgeColor = '';
             
             if (p.vegas_line !== null) {
                 const diff = (p.prediction - p.vegas_line).toFixed(1);
@@ -396,20 +374,20 @@
                     <td>${p.avg_10}</td>
                     <td>${vLine}</td>
                     <td style="${edgeColor}; font-weight: bold;">${edge}</td>
-                    <td><button class="eval-btn" style="padding: 6px 12px; font-size: 13px; background-color: #3b82f6;" onclick="openChartModal('${p.name.replace(/'/g, "\\'")}')">📊 View Graph</button></td>
+                    <td style="display:flex; gap:5px;">
+                        <button class="eval-btn" style="padding: 6px 12px; font-size: 12px; background-color: #3b82f6;" onclick="openChartModal('${p.name.replace(/'/g, "\\'")}')">📊 Graph</button>
+                        <button class="eval-btn" style="padding: 6px 12px; font-size: 12px; background-color: var(--synergy);" onclick="showSynergy('${p.name.replace(/'/g, "\\'")}', '${activeTeam}')">🤝 Synergy</button>
+                    </td>
                 </tr>
             `;
         }).join('');
     }
 
-    // --- Evaluators & Live Dashboard Logic ---
     async function runEvaluator(script, args) {
         const terminal = document.getElementById('terminal');
         terminal.innerText = `Executing ${script} ${args.join(' ')}...\nFetching data from database...\n`;
         try {
-            const response = await fetch('/api/run_evaluator', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script, args })
-            });
+            const response = await fetch('/api/run_evaluator', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ script, args }) });
             const data = await response.json();
             terminal.innerText = data.output;
         } catch (error) { terminal.innerText = `Error connecting to server: ${error}`; }
@@ -474,7 +452,9 @@
                         <div class="bet-stat"><span>True Edge:</span> <span>${edgeSign}${bet.Edge}</span></div>
                         <div class="bet-stat" style="margin-top: 10px; border-top: 1px solid #334155; padding-top: 10px;">
                             <span>Play:</span> <span class="${pickClass}">${bet.Stars}-Star ${bet.Pick}</span>
-                        </div></div>`;
+                        </div>
+                        <button class="eval-btn" style="padding: 6px 12px; font-size: 13px; background-color: var(--synergy); width: 100%; margin-top: 10px;" onclick="showSynergy('${bet.Player.replace(/'/g, "\\'")}', '${bet.Team}')">🤝 View Assist Synergy</button>
+                        </div>`;
                 });
                 html += `</div></div></details>`;
             });

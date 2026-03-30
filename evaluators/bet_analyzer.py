@@ -22,42 +22,22 @@ class BetAnalyzer:
         name = name.lower().replace('.', '').replace('-', ' ').replace("'", "")
         return name.replace(' jr', '').replace(' sr', '').replace(' iii', '').replace(' ii', '').strip()
 
-    def convert_minutes(self, x):
-        if pd.isna(x): return 0.0
-        if isinstance(x, (int, float)): return float(x)
-        x_str = str(x).strip()
-        try:
-            if ":" in x_str:
-                return float(x_str.split(":")[0]) + (float(x_str.split(":")[1]) / 60.0)
-            return float(x_str)
-        except: return 0.0
-
-    def get_season_string(self, target_date):
-        year = target_date.year
-        if target_date.month >= 10:
-            return f"{year}-{str(year+1)[-2:]}"
-        else:
-            return f"{year-1}-{str(year)[-2:]}"
-
     def calculate_confidence(self, pred, floor, ceiling, v_line):
-        """Calculates the Star Rating of a bet based on mathematical boundaries."""
-        edge = pred - v_line
+        """Restores the original Floor/Ceiling Absolute Lock logic."""
+        if pd.isna(v_line) or float(v_line) <= 0: 
+            return 0, "No Line"
+            
+        edge = pred - float(v_line)
         
         if edge >= 2.5:
-            if floor > v_line:
-                return 5, "Floor > Vegas Line (Absolute Lock)"
-            elif edge >= 4.0:
-                return 4, "Massive Median Edge (+4.0)"
-            else:
-                return 3, "Standard Median Edge (+2.5)"
+            if floor > float(v_line): return 5, "Floor > Vegas Line (Absolute Lock)"
+            elif edge >= 4.0: return 4, "Massive Median Edge (+4.0)"
+            else: return 3, "Standard Median Edge (+2.5)"
         elif edge <= -2.5:
-            if ceiling < v_line:
-                return 5, "Ceiling < Vegas Line (Absolute Lock)"
-            elif edge <= -4.0:
-                return 4, "Massive Median Edge (-4.0)"
-            else:
-                return 3, "Standard Median Edge (-2.5)"
-                
+            if ceiling < float(v_line): return 5, "Ceiling < Vegas Line (Absolute Lock)"
+            elif edge <= -4.0: return 4, "Massive Median Edge (-4.0)"
+            else: return 3, "Standard Median Edge (-2.5)"
+            
         return 0, "No Edge"
 
     def fetch_actuals(self, season_str, api_date_str=None):
@@ -112,7 +92,6 @@ class BetAnalyzer:
             p_name = row['PLAYER_LOWER']
             b_date = pd.to_datetime(row['Date']).strftime('%Y-%m-%d')
             
-            # Find matching game
             match = log[(log['PLAYER_LOWER'] == p_name) & (log['GAMEDATE'] == b_date)]
             if not match.empty:
                 actual_pts = match.iloc[0]['PTS']
@@ -121,6 +100,7 @@ class BetAnalyzer:
                 v_line = float(row['Vegas_Line'])
                 pick = row['Pick']
                 
+                # Grading is simple: Did the final pick listed in the tracker win?
                 if (pick == 'OVER' and actual_pts > v_line) or (pick == 'UNDER' and actual_pts < v_line):
                     df.at[idx, 'Result'] = 'WIN'
                 elif actual_pts == v_line:

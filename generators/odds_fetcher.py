@@ -28,7 +28,6 @@ def fetch_vegas_lines(target_teams=None):
     if target_teams:
         print(f"Targeting specific games for: {', '.join(target_teams)}")
 
-    # Get active events
     events_res = requests.get(
         f"https://api.the-odds-api.com/v4/sports/{SPORT}/events",
         params={'apiKey': API_KEY}
@@ -90,7 +89,6 @@ def fetch_vegas_lines(target_teams=None):
     os.makedirs(archive_dir, exist_ok=True)
     archive_file = os.path.join(archive_dir, f'vegas_props_{today_str}.json')
 
-    # Load prev fetched lines for today
     existing_lines = {}
     if os.path.exists(archive_file):
         try:
@@ -98,7 +96,6 @@ def fetch_vegas_lines(target_teams=None):
                 existing_lines = json.load(f).get('lines', {})
         except: pass
         
-    # Append new lines
     existing_lines.update(final_lines)
 
     output_data = {

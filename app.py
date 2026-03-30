@@ -7,14 +7,17 @@ from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response
 import pandas as pd
 
+# --- ARCHITECTURE ROUTING ---
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 from core.scraper import BasketballReferenceScraper
 from core.predictor import Predictor
+from core.synergy_engine import SynergyEngine
 
 app = Flask(__name__)
 scraper = BasketballReferenceScraper()
 proc = Predictor()
+synergy = SynergyEngine()
 
 def _normalize(name):
     name = ''.join(c for c in unicodedata.normalize('NFD', name) if unicodedata.category(c) != 'Mn')
@@ -24,10 +27,6 @@ def _normalize(name):
 @app.route('/')
 def index():
     return render_template('index.html')
-
-# ==========================================
-# Timer, Bets, Evaluators
-# ==========================================
 
 @app.route('/api/timer_status')
 def timer_status():
@@ -55,6 +54,7 @@ def best_bets():
         if pending.empty: return jsonify([])
 
         player_team_map = {}
+        team_opp_map = {}
         slate_dir = os.path.join(BASE_DIR, 'Mega_Slate_Predictions')
         if os.path.exists(slate_dir):
             for file in os.listdir(slate_dir):
@@ -64,6 +64,8 @@ def best_bets():
                         if 'Player' in m_df.columns and 'Team' in m_df.columns:
                             for _, r in m_df.iterrows():
                                 player_team_map[r['Player']] = r['Team']
+                                if 'Opponent' in m_df.columns:
+                                    team_opp_map[r['Team']] = r['Opponent']
                     except: pass
 
         game_map = {}
@@ -97,7 +99,16 @@ def best_bets():
         for _, row in pending.iterrows():
             bet = row.to_dict()
             team = player_team_map.get(bet['Player'], 'UNK')
-            g_info = game_map.get(team, {"title": f"Game Matchup ({team})", "time": "TBD", "sort": "23:59"})
+            
+            g_info = game_map.get(team)
+            if not g_info:
+                opp = team_opp_map.get(team, 'TBD')
+                if opp != 'TBD':
+                    matchup_teams = sorted([team, opp])
+                    title = f"{matchup_teams[0]} vs {matchup_teams[1]}"
+                else:
+                    title = f"Game Matchup ({team})"
+                g_info = {"title": title, "time": "TBD", "sort": "23:59"}
             
             bet['Team'] = team
             bet['GameTitle'] = g_info['title']
@@ -116,7 +127,24 @@ def best_bets():
         return jsonify([{"game": k, "bets": v} for k, v in grouped.items()])
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)})
+
+@app.route('/api/synergy', methods=['POST'])
+def get_synergy():
+    data = request.json
+    player = data.get('player')
+    team = data.get('team')
+    
+    if not player or not team or team == 'UNK':
+        return jsonify({"success": False, "error": "Invalid player or team data provided."})
+        
+    try:
+        results = synergy.get_scorer_correlations(team, player, scraper)
+        return jsonify({"success": True, "correlations": results})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route('/api/run_evaluator', methods=['POST'])
 def run_evaluator():
@@ -134,10 +162,6 @@ def run_evaluator():
         return jsonify({"output": output})
     except Exception as e:
         return jsonify({"output": f"Execution Error: {str(e)}"})
-
-# ==========================================
-# Web UI Predictions
-# ==========================================
 
 @app.route('/api/teams', methods=['GET'])
 def get_teams():

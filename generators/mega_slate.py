@@ -156,21 +156,30 @@ def run_mega_slate(target_teams=None):
                     break
         
         if v_line is not None:
-            edge = pred - v_line
-            pick = "OVER" if edge > 0 else "UNDER"
-            stars, reason = analyzer.calculate_confidence(pred, floor, ceil, v_line)
+            v_line_float = float(v_line)
+            edge = pred - v_line_float
+            
+            stars, reason = analyzer.calculate_confidence(pred, floor, ceil, v_line_float)
             
             if stars >= 3:
+                ai_raw_lean = "OVER" if edge > 0 else "UNDER"
+                
+                if stars == 5:
+                    final_pick = ai_raw_lean
+                else:
+                    final_pick = "UNDER" if ai_raw_lean == "OVER" else "OVER"
+                
                 color_edge = f"+{edge:.1f}" if edge > 0 else f"{edge:.1f}"
-                print(f"{player:<22} | {v_line:<5.1f} | {pred:<7.1f} | {color_edge:<5} | {stars}-Star {pick:<5} | {reason}")
+                print(f"{player:<22} | {v_line_float:<5.1f} | {pred:<7.1f} | {color_edge:<5} | {stars}-Star {final_pick:<5} | {reason}")
+                
                 new_bets.append({
                     "Date": today_str,
                     "Player": player,
-                    "Vegas_Line": v_line,
+                    "Vegas_Line": v_line_float,
                     "AI_Pred": pred,
                     "AI_Floor": floor,
                     "AI_Ceiling": ceil,
-                    "Pick": pick,
+                    "Pick": final_pick,
                     "Edge": round(edge, 1),
                     "Stars": stars,
                     "Actual_PTS": "PENDING",

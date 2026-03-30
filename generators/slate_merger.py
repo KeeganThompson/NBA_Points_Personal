@@ -23,7 +23,7 @@ def merge_daily_predictions():
 
     # Check if Mega-Slate already exists
     if os.path.exists(output_file):
-        print(f" 📄 Found existing Master Slate from predict_timer: {output_file}")
+        print(f"  Found existing Master Slate from predict_timer: {output_file}")
         try:
             existing_master = pd.read_csv(output_file)
             df_list.append(existing_master)

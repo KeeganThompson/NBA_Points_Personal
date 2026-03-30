@@ -7,9 +7,6 @@ class LineupOptimizer:
         self.csv_file = csv_file
         self.df = pd.read_csv(csv_file)
         self.prepare_data()
-    # Generates a realistic DraftKings salary. 
-    # Usually, DFS prices players at roughly $300 per projected fantasy point, 
-    # plus a baseline floor for active players.
     def mock_draftkings_salary(self, avg_pts):
         if pd.isna(avg_pts) or avg_pts <= 0:
             return 3000
@@ -33,7 +30,7 @@ class LineupOptimizer:
         return positions
 
     def prepare_data(self):
-        print("📊 Loading Player Pool and generating salaries...")
+        print(" Loading Player Pool and generating salaries...")
         
         self.df = self.df.dropna(subset=['Predicted', '10_Game_Avg'])
         
@@ -55,7 +52,7 @@ class LineupOptimizer:
         - Minimum 1 Center (C)
         - 1 UTIL (Any)
         """
-        print(f"\n🧠 Running PuLP Linear Optimizer (Strategy: {strategy.upper()})...")
+        print(f"\n Running PuLP Linear Optimizer (Strategy: {strategy.upper()})...")
         
         prob = pulp.LpProblem("DFS_Optimal_Lineup", pulp.LpMaximize)
         
@@ -88,7 +85,7 @@ class LineupOptimizer:
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
         
         if pulp.LpStatus[prob.status] != 'Optimal':
-            print("❌ Could not find a valid lineup under the constraints.")
+            print("Could not find a valid lineup under the constraints.")
             return
             
         lineup = []
@@ -113,7 +110,7 @@ class LineupOptimizer:
         lineup.sort(key=lambda x: (pos_order.get(x['Pos'], 4), -x['Salary']))
         
         print("\n=======================================================")
-        print(" 🏆 OPTIMAL DRAFTKINGS LINEUP GENERATED")
+        print("  OPTIMAL DRAFTKINGS LINEUP GENERATED")
         print("=======================================================")
         print(f"{'Position':<6} | {'Player':<22} | {'Salary':<7} | {'Proj PTS':<8} | {'Value (PTS/$K)'}")
         print("-" * 65)
@@ -121,8 +118,8 @@ class LineupOptimizer:
             target_pts = p['Prediction'] if strategy == "median" else p['Ceiling']
             print(f"{p['Pos']:<6} | {p['Player']:<22} | ${p['Salary']:<6} | {target_pts:<8.1f} | {p['Value']:<4.2f}x")
         print("=======================================================")
-        print(f"💰 Total Salary Used: ${total_salary:,} / $50,000")
-        print(f"🎯 Total Projected:   {total_proj:.1f} PTS")
+        print(f" Total Salary Used: ${total_salary:,} / $50,000")
+        print(f" Total Projected:   {total_proj:.1f} PTS")
         print("=======================================================\n")
 
 if __name__ == "__main__":
@@ -134,4 +131,4 @@ if __name__ == "__main__":
         opt.optimize(strategy="ceiling")
         
     except FileNotFoundError:
-        print("❌ Could not find 'Backtest_Results.csv'. Run your backtester or web app first to generate data!")
+        print(" Could not find 'Backtest_Results.csv'. Run your backtester or web app first to generate data!")
