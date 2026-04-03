@@ -17,7 +17,7 @@ class PlayTypeEngine:
         print("Initializing Global Synergy Matrix...")
         off_dfs = []
         def_dfs = []
-        play_types = ['Isolation', 'PRBallHandler', 'Spotup', 'Postup']
+        play_types = ['Isolation', 'PRBallHandler', 'Spotup', 'Postup', 'Cut', 'Transition', 'PRRollMan', 'Handoff']
         
         for pt in play_types:
             try:
@@ -55,7 +55,7 @@ class PlayTypeEngine:
             return 0.0
             
         total_delta = 0.0
-        for pt in ['Isolation', 'PRBallHandler', 'Spotup', 'Postup']:
+        for pt in ['Isolation', 'PRBallHandler', 'Spotup', 'Postup', 'Cut', 'Transition', 'PRRollMan', 'Handoff']:
             p_stats = player_off[player_off['PLAY_TYPE'] == pt]
             t_stats = opp_def[opp_def['PLAY_TYPE'] == pt]
             
@@ -67,4 +67,4 @@ class PlayTypeEngine:
                     total_delta += poss * (opp_ppp - avg_ppp)
                 except: continue
                 
-        return max(-3.5, min(total_delta, 3.5))
+        return max(-5.0, min(total_delta, 5.0))

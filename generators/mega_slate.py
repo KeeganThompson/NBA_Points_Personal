@@ -11,6 +11,7 @@ sys.path.append(BASE_DIR)
 
 from core.scraper import BasketballReferenceScraper
 from core.predictor import Predictor
+from core.playtype_engine import PlayTypeEngine
 from evaluators.bet_analyzer import BetAnalyzer
 
 def normalize_name(name):
@@ -25,7 +26,10 @@ def run_mega_slate(target_teams=None):
     
     scraper = BasketballReferenceScraper()
     proc = Predictor()
+    pt_engine = PlayTypeEngine()
     analyzer = BetAnalyzer()
+    
+    pt_engine.pre_fetch_matrix()
     
     today_str = datetime.now().strftime('%Y-%m-%d')
     
@@ -96,13 +100,17 @@ def run_mega_slate(target_teams=None):
         for player in final_player_list:
             try:
                 player_data = all_player_data[player]
-                metadata = team_meta_map.get(player, {'exp': 5, 'pos': 'F'})
+                metadata = team_meta_map.get(player, {'exp': 5, 'pos': 'F', 'id': None})
                 is_starter = player in projected_starters
+                
+                delta = 0.0
+                if metadata.get('id'):
+                    delta = pt_engine.calculate_matchup_delta(metadata['id'], next_game['Opp_ID'])
                 
                 model_output = proc.predict_next_game(
                     player_data, adv_stats, team_map, current_team_id, next_game, 
                     metadata['exp'], metadata['pos'], dvp_ranks, is_starter, 
-                    vacated_pts=total_vacated_pts
+                    vacated_pts=total_vacated_pts, playtype_delta=delta
                 )
                 
                 recent_10 = player_data['PTS'].tail(10).mean()

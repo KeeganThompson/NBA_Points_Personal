@@ -8,17 +8,16 @@ from datetime import datetime, timedelta
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 import warnings
 
-# Suppress API and Pandas warnings for a clean console
 warnings.filterwarnings('ignore')
 
 from nba_api.stats.endpoints import leaguegamelog, leaguedashteamstats, commonplayerinfo
 
-# Route to root directory
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(BASE_DIR)
 
 from core.predictor import Predictor
 from core.scraper import BasketballReferenceScraper
+from core.playtype_engine import PlayTypeEngine
 
 def fetch_season_cache():
     print(" Downloading 2025-26 Season Master Log (This takes ~5 seconds)...")
@@ -27,8 +26,6 @@ def fetch_season_cache():
     ).get_data_frames()[0]
     
     season_log['GAME_DATE'] = pd.to_datetime(season_log['GAME_DATE'])
-    
-    # Build a quick team mapping
     team_map = dict(zip(season_log['TEAM_ABBREVIATION'], season_log['TEAM_ID']))
     
     print(" Fetching Advanced Team Stats...")
@@ -42,7 +39,6 @@ def fetch_season_cache():
     return season_log, team_map, adv_stats
 
 def format_player_history(history_df):
-    """Converts the NBA API log into the format your Predictor expects."""
     df = history_df.copy().sort_values('GAME_DATE')
     df['PTS'] = df['PTS']
     df['MP'] = df['MIN']
@@ -71,22 +67,23 @@ def run_walk_forward():
     
     season_log, team_map, adv_stats = fetch_season_cache()
     predictor = Predictor()
-    player_info_cache = {}
+    pt_engine = PlayTypeEngine()
     
+    pt_engine.pre_fetch_matrix()
+    
+    player_info_cache = {}
     total_bets = 0
     total_wins = 0
     total_losses = 0
     total_pushes = 0
     all_preds, all_actuals = [], []
     
-    # Star Tier Trackers
     tier_stats = {
         5: {"W": 0, "L": 0, "P": 0},
         4: {"W": 0, "L": 0, "P": 0},
         3: {"W": 0, "L": 0, "P": 0}
     }
 
-    # Time Machine Loop
     for file_path in vegas_files:
         date_str = os.path.basename(file_path).replace('vegas_props_', '').replace('.json', '')
         target_date = pd.to_datetime(date_str)
@@ -102,7 +99,6 @@ def run_walk_forward():
             
         todays_games = season_log[season_log['GAME_DATE'] == target_date]
         if todays_games.empty:
-            print("  [SKIP] No NBA games played on this date.")
             continue
             
         daily_bets = 0
@@ -116,8 +112,6 @@ def run_walk_forward():
             if player_name not in vegas_data: continue
                 
             vegas_line = float(vegas_data[player_name])
-            
-            # Shielding future data
             history = season_log[(season_log['PLAYER_ID'] == player_id) & (season_log['GAME_DATE'] < target_date)]
             if len(history) < 5: continue 
                 
@@ -155,39 +149,46 @@ def run_walk_forward():
             is_starter = True if last_min > 24.0 else False
 
             try:
+                delta = pt_engine.calculate_matchup_delta(player_id, opp_id)
+                
                 result = predictor.predict_next_game(
                     player_df=player_df, adv_stats=adv_stats, team_map=team_map,
                     current_team_id=current_team_id, next_game_data=next_game_data,
-                    experience=exp, position=pos, dvp_ranks={}, is_starter=is_starter
+                    experience=exp, position=pos, dvp_ranks={}, is_starter=is_starter,
+                    playtype_delta=delta
                 )
                 ai_pred = result['prediction']
+                ai_floor = result['floor'] 
+                ai_ceil = result['ceiling'] 
             except Exception as e:
                 continue
                 
-            # 5. Calculate Percentage Edge & Assign Star Rating
             diff = round(ai_pred - vegas_line, 1)
-            pct_edge = abs(diff) / vegas_line if vegas_line > 0 else 0
             
             stars = 0
-            if vegas_line < 12.0:
-                # THE MICRO-LINE FIX: Require a minimum 2.0 point absolute difference for 5-Stars
-                if pct_edge >= 0.25 and abs(diff) >= 2.0: stars = 5
-                elif pct_edge >= 0.20: stars = 4
-                elif pct_edge >= 0.16: stars = 3
-            elif vegas_line < 22.0:
-                # Added the 2.0 point safety floor here as well
-                if pct_edge >= 0.18 and abs(diff) >= 2.0: stars = 5
-                elif pct_edge >= 0.15: stars = 4
-                elif pct_edge >= 0.12: stars = 3
-            else: # Stars (22.0+)
-                if abs(diff) >= 4.0: stars = 5
-                elif abs(diff) >= 3.2: stars = 4
-                elif abs(diff) >= 2.6: stars = 3
+            
+            if vegas_line < 6.5:
+                continue
+                
+            if diff > 0 and ai_floor > vegas_line:
+                stars = 5
+            elif diff < 0 and ai_ceil < vegas_line:
+                stars = 5
+                
+            else:
+                pct_edge = abs(diff) / vegas_line if vegas_line > 0 else 0
+                if vegas_line < 12.0:
+                    if pct_edge >= 0.20 and abs(diff) >= 2.0: stars = 4
+                    elif pct_edge >= 0.16: stars = 3
+                elif vegas_line < 22.0:
+                    if pct_edge >= 0.15 and abs(diff) >= 2.5: stars = 4
+                    elif pct_edge >= 0.12: stars = 3
+                else:
+                    if abs(diff) >= 3.5: stars = 4
+                    elif abs(diff) >= 2.6: stars = 3
 
             if stars >= 3:
-                # THE HYBRID LOGIC: Tail 5-Stars, Fade 3/4-Stars
                 ai_raw_lean = "OVER" if diff > 0 else "UNDER"
-                
                 if stars == 5:
                     final_pick = ai_raw_lean
                     action = "TAIL"
@@ -200,7 +201,6 @@ def run_walk_forward():
                 all_preds.append(ai_pred)
                 all_actuals.append(actual_pts)
                 
-                # Grade the Final Pick
                 if final_pick == "OVER":
                     res = "WIN" if actual_pts > vegas_line else "LOSS" if actual_pts < vegas_line else "PUSH"
                 else:
@@ -225,7 +225,6 @@ def run_walk_forward():
         if daily_bets > 0:
             print(f"\n   Daily Recap: {daily_wins}W - {daily_bets - daily_wins}L ({(daily_wins/daily_bets)*100:.1f}%)")
 
-    # 6. Final Evaluation Report
     print("\n=======================================================")
     print("  FINAL HYBRID WALK-FORWARD RESULTS")
     print("=======================================================")
@@ -241,7 +240,6 @@ def run_walk_forward():
         print(f"Estimated Profit:      {units:+.2f} Units")
         print("-" * 55)
         
-        # Breakdown by Star Rating
         for st in [5, 4, 3]:
             w = tier_stats[st]['W']
             l = tier_stats[st]['L']

@@ -3,6 +3,7 @@ import numpy as np
 import xgboost as xgb
 import lightgbm as lgb
 import optuna
+import random
 import warnings
 from sklearn.metrics import mean_absolute_error
 
@@ -32,7 +33,8 @@ class Predictor:
             'Vacated_Team_PTS',
             'Opp_Def_Trend',
             'Opp_Def_PNR_PPP',     
-            'Opp_Def_SpotUp_PPP'   
+            'Opp_Def_SpotUp_PPP',
+            'Playtype_Advantage' 
         ]
 
     def convert_minutes(self, x):
@@ -143,21 +145,22 @@ class Predictor:
         
         df['Trend_Multiplier'] = df['L5_PTS'] / (df['Season_Avg_PTS'] + 0.1)
         df['Vacated_Team_PTS'] = 0.0
+        
+        df['Playtype_Advantage'] = np.where(df['Is_Guard'] == 1, (df['Opp_Def_PNR_PPP'] - 0.95) * 6.0, (df['Opp_Def_SpotUp_PPP'] - 1.00) * 4.0)
 
         df = df.bfill().fillna(0)
         return df
 
-    def predict_next_game(self, player_df, adv_stats, team_map, current_team_id, next_game_data, experience, position, dvp_ranks, is_starter, vacated_pts=0.0):
+    def predict_next_game(self, player_df, adv_stats, team_map, current_team_id, next_game_data, experience, position, dvp_ranks, is_starter, vacated_pts=0.0, playtype_delta=0.0):
         engineered_df = self.prepare_data(player_df, adv_stats, team_map, current_team_id, experience, position, dvp_ranks)
         
         if engineered_df.empty or len(engineered_df) < 5:
             safe_avg = player_df['PTS'].mean() if not player_df.empty else 0.0
             if pd.isna(safe_avg): safe_avg = 0.0
-            
             return {
                 "prediction": float(safe_avg),
-                "floor": float(max(0.0, safe_avg - 2.0)),
-                "ceiling": float(safe_avg + 3.0)
+                "floor": float(max(0.0, safe_avg - 3.0)),
+                "ceiling": float(safe_avg + 4.0)
             }
 
         target_opp_str = next_game_data.get('Opp')
@@ -223,12 +226,6 @@ class Predictor:
         
         opp_dvp_all = dvp_ranks.get(target_opp_str, {'G': 15.5, 'F': 15.5, 'C': 15.5})
         target_dvp_rank = opp_dvp_all.get(position, 15.5)
-        
-        best_matchup_rank = max(opp_dvp_all.values())
-        worst_matchup_rank = min(opp_dvp_all.values())
-        
-        is_alpha_target = (target_dvp_rank == best_matchup_rank) and (target_dvp_rank >= 18.0)
-        is_avoid_target = (target_dvp_rank == worst_matchup_rank) and (target_dvp_rank <= 12.0)
 
         safe_usg = min(current_l5_usg, 1.0)
         target_dvp_advantage = (target_dvp_rank - 15.5) * (safe_usg / 0.20)
@@ -245,154 +242,66 @@ class Predictor:
         if pd.isna(safe_l10_per_100) or safe_l10_per_100 == 0: 
             safe_l10_per_100 = (current_season_avg / (current_l5_min + 0.1)) * 100.0 * (48.0 / 100.0)
             
-        if current_l5_usg >= 0.28 and current_season_avg >= 20.0:
-            safe_l10_per_100 = max(safe_l10_per_100, current_l3_pts_per_100)
-            
         dynamic_base = expected_possessions * (safe_l10_per_100 / 100.0)
         
         games_in_7 = next_game_data.get('Games_In_7_Days', 2.0)
-        opp_games_in_7 = next_game_data.get('Opp_Games_In_7_Days', 2.0)
 
         next_game_features = pd.DataFrame([[
-            1 if is_home_tonight else 0,                          
-            min(next_game_rest, 7),                          
-            next_recovery_val,                               
-            target_dvp_advantage,                                  
-            target_pace_val,         
-            min(next_blowout_risk, 20.0),       
-            current_l3_pts,                                  
-            current_l5_pts,                                  
-            current_l10_pts,                                 
-            proj_minutes,                                
-            current_l5_fga,                                  
-            current_l5_usg,                                  
-            current_season_avg,
-            current_location_avg,  
-            1 if experience == 0 else 0,
-            current_l5_pts_per_100,
-            current_trend,
-            current_usg_delta,
-            current_pts_per_100_delta,
-            1 if position == 'G' else 0,
-            1 if position == 'F' else 0,
-            1 if position == 'C' else 0,
-            current_min_std,
-            current_pts_per_100_std,
-            games_in_7,
-            float(vacated_pts),
-            float(target_def_trend),
-            float(target_pnr_ppp),
-            float(target_spotup_ppp)
+            1 if is_home_tonight else 0, min(next_game_rest, 7), next_recovery_val,                               
+            target_dvp_advantage, target_pace_val, min(next_blowout_risk, 20.0),       
+            current_l3_pts, current_l5_pts, current_l10_pts, proj_minutes, current_l5_fga, current_l5_usg,                                  
+            current_season_avg, current_location_avg, 1 if experience == 0 else 0,
+            current_l5_pts_per_100, current_trend, current_usg_delta, current_pts_per_100_delta,
+            1 if position == 'G' else 0, 1 if position == 'F' else 0, 1 if position == 'C' else 0,
+            current_min_std, current_pts_per_100_std, games_in_7, float(vacated_pts),
+            float(target_def_trend), float(target_pnr_ppp), float(target_spotup_ppp), float(playtype_delta) 
         ]], columns=self.feature_cols)
 
-        def lgb_objective(trial):
-            params = {
-                'objective': 'huber',
-                'random_state': 42,
-                'n_estimators': 30, 
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.08),
-                'max_depth': trial.suggest_int('max_depth', 2, 4),
-                'reg_lambda': trial.suggest_float('reg_lambda', 1.0, 4.0),
-                'min_child_samples': min(4, max(1, len(X) // 3)),
-                'verbose': -1
-            }
-            model = lgb.LGBMRegressor(**params)
-            model.fit(X_df, y, sample_weight=weights)
-            preds = model.predict(X_df)
-            return mean_absolute_error(y, preds)
-
-        study = optuna.create_study(direction='minimize')
-        study.optimize(lgb_objective, n_trials=3)
-        
-        best_lgb_params = study.best_params
-        best_lgb_params.update({
-            'objective': 'huber', 'random_state': 42,  'n_estimators': 60, 'verbose': -1, 
-            'min_child_samples': min(4, max(1, len(X) // 3))
-        })
-        
-        
-        lgb_model = lgb.LGBMRegressor(**best_lgb_params)
+        lgb_model = lgb.LGBMRegressor(
+            objective='huber', random_state=None, n_estimators=50, learning_rate=0.04,
+            max_depth=3, min_child_samples=min(4, max(1, len(X) // 3)), verbose=-1
+        )
         lgb_model.fit(X_df, y, sample_weight=weights)
         lgb_pred = lgb_model.predict(next_game_features)[0]
 
         xgb_model = xgb.XGBRegressor(
-            objective='reg:absoluteerror', random_state=42, n_estimators=60, 
+            objective='reg:absoluteerror', random_state=None, n_estimators=50, 
             learning_rate=0.03, max_depth=3, subsample=0.8, colsample_bytree=0.8, 
-            min_child_weight=min(4, max(1, len(X) // 3)), reg_alpha=2.0, reg_lambda=3.0, base_score=dynamic_base, n_jobs=-1
+            min_child_weight=min(4, max(1, len(X) // 3)), base_score=dynamic_base, n_jobs=-1
         )
         xgb_model.fit(X_df, y, sample_weight=weights)
         xgb_pred = xgb_model.predict(next_game_features)[0]
         
-        raw_prediction = (xgb_pred + lgb_pred) / 2.0
+        prediction = (xgb_pred + lgb_pred) / 2.0
         
         lgb_floor = lgb.LGBMRegressor(
-            objective='quantile', alpha=0.3, random_state=42, n_estimators=40, 
+            objective='quantile', alpha=0.15, random_state=None, n_estimators=40, 
             learning_rate=0.05, max_depth=2, verbose=-1, min_child_samples=min(4, max(1, len(X) // 3))
         )
         lgb_floor.fit(X_df, y, sample_weight=weights)
-        raw_floor = lgb_floor.predict(next_game_features)[0]
+        floor = lgb_floor.predict(next_game_features)[0]
         
         lgb_ceil = lgb.LGBMRegressor(
-            objective='quantile', alpha=0.7, random_state=42, n_estimators=40, 
+            objective='quantile', alpha=0.85, random_state=None, n_estimators=40, 
             learning_rate=0.05, max_depth=2, verbose=-1, min_child_samples=min(4, max(1, len(X) // 3))
         )
         lgb_ceil.fit(X_df, y, sample_weight=weights)
-        raw_ceil = lgb_ceil.predict(next_game_features)[0]
+        ceiling = lgb_ceil.predict(next_game_features)[0]
 
         multiplier = 1.0
-        
         if vacated_pts >= 15.0:
             if is_starter: multiplier *= 1.15
             elif current_l5_usg >= 0.20: multiplier *= 1.10
-        
-        if is_alpha_target:
-            multiplier *= 1.10 if safe_usg >= 0.20 else 1.05
-        if is_avoid_target:
-            multiplier *= 0.90 if safe_usg >= 0.20 else 0.85
             
-        if next_blowout_risk >= 16.0:
-            if current_l5_min >= 30.0: multiplier *= 0.88  
-            elif current_l5_min <= 15.0: multiplier *= 1.12  
-        elif next_blowout_risk >= 10.0:
-            if current_l5_min >= 30.0: multiplier *= 0.94  
-            elif current_l5_min <= 15.0: multiplier *= 1.06
-                
-        if games_in_7 >= 4.0: multiplier *= 0.95 
-        if opp_games_in_7 >= 4.0: multiplier *= 1.05 
-        elif opp_games_in_7 <= 1.0: multiplier *= 0.97
-            
-        if not is_starter and not is_home_tonight and experience < 4:
-            multiplier *= 0.92
-
-        if position == 'G' and target_pnr_ppp > 1.00:
-            multiplier *= 1.08
-        elif position == 'G' and target_pnr_ppp < 0.85:
-            multiplier *= 0.93
-            
-        if (position == 'F' or position == 'G') and target_spotup_ppp > 1.10:
-            multiplier *= 1.06
-            
-        if next_game_rest == 0:
-            if next_recovery_val < 0.8 or current_min_std > 4.5:
-                multiplier *= 0.85
-            else:
-                multiplier *= 0.94 if experience >= 5 else 0.97 
-        elif next_game_rest == 1:
-            multiplier *= 0.96 if experience >= 5 else 0.98
-            
-        prediction = raw_prediction * multiplier
-        floor = raw_floor * multiplier
-        ceiling = raw_ceil * multiplier
+        prediction *= multiplier
+        floor *= multiplier
+        ceiling *= multiplier
         
         safe_pts_base = current_l10_pts if pd.notna(current_l10_pts) and current_l10_pts > 0 else current_season_avg
-        volatility_bonus = current_min_std * 0.5
+        volatility_bonus = current_min_std * 0.75
         
-        if current_season_avg >= 22.0:
-            max_cap = (safe_pts_base * 1.45) + 5.0 + volatility_bonus
-        else:
-            max_cap = (safe_pts_base * 1.35) + 4.0 + volatility_bonus
-            
-        min_cap = max(0.0, (safe_pts_base * 0.60) - 4.0)
+        max_cap = (safe_pts_base * 1.50) + 6.0 + volatility_bonus
+        min_cap = max(0.0, (safe_pts_base * 0.50) - 5.0)
         
         prediction = np.clip(prediction, min_cap, max_cap)
         floor = np.clip(floor, min_cap, prediction - 0.5) 

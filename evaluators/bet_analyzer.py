@@ -23,22 +23,42 @@ class BetAnalyzer:
         return name.replace(' jr', '').replace(' sr', '').replace(' iii', '').replace(' ii', '').strip()
 
     def calculate_confidence(self, pred, floor, ceiling, v_line):
-        """Restores the original Floor/Ceiling Absolute Lock logic."""
         if pd.isna(v_line) or float(v_line) <= 0: 
             return 0, "No Line"
             
-        edge = pred - float(v_line)
+        v_line_float = float(v_line)
         
-        if edge >= 2.5:
-            if floor > float(v_line): return 5, "Floor > Vegas Line (Absolute Lock)"
-            elif edge >= 4.0: return 4, "Massive Median Edge (+4.0)"
-            else: return 3, "Standard Median Edge (+2.5)"
-        elif edge <= -2.5:
-            if ceiling < float(v_line): return 5, "Ceiling < Vegas Line (Absolute Lock)"
-            elif edge <= -4.0: return 4, "Massive Median Edge (-4.0)"
-            else: return 3, "Standard Median Edge (-2.5)"
+        if v_line_float < 6.5:
+            return 0, "Line too low (Garbage Time Risk)"
             
-        return 0, "No Edge"
+        diff = round(pred - v_line_float, 1)
+        
+        if diff > 0 and floor > v_line_float:
+            return 5, "Floor > Vegas Line (Absolute Lock)"
+        elif diff < 0 and ceiling < v_line_float:
+            return 5, "Ceiling < Vegas Line (Absolute Lock)"
+            
+        pct_edge = abs(diff) / v_line_float if v_line_float > 0 else 0
+        stars = 0
+        reason = "No Edge"
+        
+        if v_line_float < 12.0:
+            if pct_edge >= 0.20 and abs(diff) >= 2.0: 
+                stars, reason = 4, f"Massive Edge ({diff:+.1f})"
+            elif pct_edge >= 0.16: 
+                stars, reason = 3, f"Standard Edge ({diff:+.1f})"
+        elif v_line_float < 22.0:
+            if pct_edge >= 0.15 and abs(diff) >= 2.5: 
+                stars, reason = 4, f"Massive Edge ({diff:+.1f})"
+            elif pct_edge >= 0.12: 
+                stars, reason = 3, f"Standard Edge ({diff:+.1f})"
+        else:
+            if abs(diff) >= 3.5: 
+                stars, reason = 4, f"Massive Edge ({diff:+.1f})"
+            elif abs(diff) >= 2.6: 
+                stars, reason = 3, f"Standard Edge ({diff:+.1f})"
+                
+        return stars, reason
 
     def fetch_actuals(self, season_str, api_date_str=None):
         try:
@@ -100,7 +120,6 @@ class BetAnalyzer:
                 v_line = float(row['Vegas_Line'])
                 pick = row['Pick']
                 
-                # Grading is simple: Did the final pick listed in the tracker win?
                 if (pick == 'OVER' and actual_pts > v_line) or (pick == 'UNDER' and actual_pts < v_line):
                     df.at[idx, 'Result'] = 'WIN'
                 elif actual_pts == v_line:

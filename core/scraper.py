@@ -59,13 +59,15 @@ class BasketballReferenceScraper:
             player_col = next((c for c in cols if c in ['PLAYER', 'PLAYERNAME']), None)
             exp_col = next((c for c in cols if c in ['SEASONEXP', 'EXP']), None)
             pos_col = next((c for c in cols if c == 'POSITION'), None)
+            id_col = next((c for c in cols if c in ['PLAYERID', 'ID']), None)
             
             if player_col and exp_col and pos_col:
                 for _, row in df.iterrows():
                     val = str(row[exp_col]).strip().upper()
                     exp_val = 0 if val in ['R', '0'] else int(float(val))
                     pos = self._simplify_pos(row[pos_col])
-                    meta_map[row[player_col]] = {'exp': exp_val, 'pos': pos}
+                    pid = row[id_col] if id_col else None
+                    meta_map[row[player_col]] = {'exp': exp_val, 'pos': pos, 'id': pid}
             return meta_map
         except:
             return {}
